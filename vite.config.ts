@@ -43,11 +43,11 @@ export default defineConfig(({mode}) => {
             {
               platform: 'play',
               id: 'app.azamfahd.account20.twa',
-              url: 'https://play.google.com/store/apps/details?id=app.azamfahd.account20.twa'
+              url: 'https://github.com/azamfahd/account20/releases'
             },
             {
               platform: 'webapp',
-              url: 'https://account20.netlify.app/manifest.json'
+              url: 'https://azamfahd.github.io/account20/manifest.json'
             }
           ],
           shortcuts: [
