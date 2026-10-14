@@ -96,7 +96,7 @@ export const UpdateNotificationBanner: React.FC<UpdateNotificationBannerProps> =
               </button>
 
               <a
-                href="https://github.com/azamfahd/soparmarkit/releases"
+                href="https://github.com/azamfahd/account20/releases"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-slate-400 hover:text-slate-200 transition-colors font-mono text-[10px]"

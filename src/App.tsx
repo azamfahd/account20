@@ -6213,7 +6213,7 @@ export default function App() {
                 onTriggerTestBanner={() => {
                   setRemoteAppConfig(prev => ({
                     latestVersion: prev?.latestVersion || '1.0.6',
-                    apkUrl: prev?.apkUrl || 'https://github.com/azamfahd/soparmarkit/releases/latest/download/app-release.apk',
+                    apkUrl: prev?.apkUrl || 'https://github.com/azamfahd/account20/releases/latest/download/app-release.apk',
                     updateMessage: prev?.updateMessage || '🎉 تجربة إشعار التحديث: النظام متصل بنجاح بالسحابة وجاهز لاستقبال التحديثات!',
                     mandatory: false,
                     updatedAt: new Date().toISOString()

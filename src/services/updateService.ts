@@ -1,7 +1,7 @@
 /**
  * updateService.ts
  * In-App Direct GitHub & Dual Update System for APK & Web:
- * 1. Direct GitHub Releases API query for repository: azamfahd/soparmarkit
+ * 1. Direct GitHub Releases API query for repository: azamfahd/account20
  * 2. OTA (Over-The-Air) for lightweight web & PWA UI updates
  * 3. Full APK Direct Download from GitHub Release Assets without losing local data
  */
@@ -10,7 +10,7 @@ import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { getLatestAppVersion } from './firebase';
 
-export const GITHUB_REPO = 'azamfahd/soparmarkit';
+export const GITHUB_REPO = 'azamfahd/account20';
 export const GITHUB_ALT_REPO = 'azamfahd/smart-accounting-system';
 export const GITHUB_RELEASES_PAGE_URL = `https://github.com/${GITHUB_REPO}/releases`;
 export const GITHUB_RELEASES_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
@@ -85,7 +85,7 @@ export function getApkDownloadUrl(fallbackUrl?: string): string {
 
 /**
  * Directly queries GitHub Releases API with automatic multi-repo failover:
- * Primary: azamfahd/soparmarkit
+ * Primary: azamfahd/account20
  * Secondary: azamfahd/smart-accounting-system
  */
 export async function fetchGitHubLatestRelease(): Promise<GitHubReleaseInfo | null> {

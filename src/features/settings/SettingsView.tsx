@@ -220,7 +220,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   // App Update Publisher states for Owner / Developer
   const [liveRemoteConfig, setLiveRemoteConfig] = React.useState<AppVersionConfig | null>(null);
   const [devVersionInput, setDevVersionInput] = React.useState('1.0.6');
-  const [devApkUrlInput, setDevApkUrlInput] = React.useState('https://github.com/azamfahd/soparmarkit/releases/latest/download/app-release.apk');
+  const [devApkUrlInput, setDevApkUrlInput] = React.useState('https://github.com/azamfahd/account20/releases/latest/download/app-release.apk');
   const [devUpdateMsgInput, setDevUpdateMsgInput] = React.useState('يتوفر تحديث جديد يحتوي على تحسينات واسعة بالسرعة والأداء واستقرار أسرع للتطبيق.');
   const [devIsMandatory, setDevIsMandatory] = React.useState(false);
   const [isPublishingUpdate, setIsPublishingUpdate] = React.useState(false);
@@ -298,7 +298,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     let ghLatency = 0;
     const ghStart = Date.now();
     try {
-      const ghRes = await fetch('https://api.github.com/repos/azamfahd/soparmarkit/releases/latest', {
+      const ghRes = await fetch('https://api.github.com/repos/azamfahd/account20/releases/latest', {
         headers: { 'Accept': 'application/vnd.github.v3+json' },
         cache: 'no-store'
       });
@@ -1720,7 +1720,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       <div className="flex justify-between items-center">
                         <button
                           type="button"
-                          onClick={() => setDevApkUrlInput("https://github.com/azamfahd/soparmarkit/releases/latest/download/app-release.apk")}
+                          onClick={() => setDevApkUrlInput("https://github.com/azamfahd/account20/releases/latest/download/app-release.apk")}
                           className="text-[10px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-md border border-indigo-200 transition-colors cursor-pointer flex items-center gap-1"
                         >
                           <ExternalLink className="w-3 h-3 text-indigo-600" />
@@ -1732,7 +1732,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         type="text"
                         value={devApkUrlInput}
                         onChange={(e) => setDevApkUrlInput(e.target.value)}
-                        placeholder="https://github.com/azamfahd/soparmarkit/releases/..."
+                        placeholder="https://github.com/azamfahd/account20/releases/..."
                         className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs font-bold text-slate-800 focus:border-indigo-500 focus:bg-white outline-none transition-all dir-ltr text-left"
                       />
                     </div>

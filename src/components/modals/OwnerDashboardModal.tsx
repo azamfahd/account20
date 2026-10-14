@@ -51,7 +51,7 @@ export const OwnerDashboardModal: React.FC<OwnerDashboardModalProps> = ({
 
   // Updates State
   const [newVersionInput, setNewVersionInput] = useState('1.0.6');
-  const [apkUrlInput, setApkUrlInput] = useState('https://github.com/azamfahd/soparmarkit/releases/latest/download/app-release.apk');
+  const [apkUrlInput, setApkUrlInput] = useState('https://github.com/azamfahd/account20/releases/latest/download/app-release.apk');
   const [updateMessageInput, setUpdateMessageInput] = useState('يتوفر تحديث جديد يحتوي على تحسينات واسعة بالسرعة والأداء واستقرار أسرع للتطبيق.');
   const [isMandatory, setIsMandatory] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);

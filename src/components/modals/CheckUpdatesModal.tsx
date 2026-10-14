@@ -300,7 +300,7 @@ export const CheckUpdatesModal: React.FC<CheckUpdatesModalProps> = ({
                   </div>
 
                   <a
-                    href="https://github.com/azamfahd/soparmarkit/releases"
+                    href="https://github.com/azamfahd/account20/releases"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center justify-center gap-1 text-[11px] font-bold text-slate-400 hover:text-slate-600 pt-1 transition-colors"

@@ -424,7 +424,7 @@ export async function ensureDefaultAppVersionConfig(): Promise<void> {
     if (!docSnap.exists()) {
       await setDoc(docRef, {
         latestVersion: "1.0.5",
-        apkUrl: "https://github.com/azamfahd/soparmarkit/releases/latest/download/app-release.apk",
+        apkUrl: "https://github.com/azamfahd/account20/releases/latest/download/app-release.apk",
         updateMessage: "يتوفر تحديث جديد يحتوي على تحسينات واسعة وإصلاحات ممتازة للتطبيق.",
         mandatory: false,
         updatedAt: new Date().toISOString()
