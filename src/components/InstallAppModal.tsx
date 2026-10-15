@@ -12,9 +12,10 @@ import {
   Zap, 
   Check, 
   FileCheck,
-  AlertCircle
+  AlertCircle,
+  ExternalLink
 } from 'lucide-react';
-import { getApkDownloadUrl } from '../services/updateService';
+import { getApkDownloadUrl, fetchGitHubLatestRelease, GITHUB_RELEASES_PAGE_URL } from '../services/updateService';
 
 interface InstallAppModalProps {
   isOpen: boolean;
@@ -33,20 +34,36 @@ export const InstallAppModal: React.FC<InstallAppModalProps> = ({
 }) => {
   const [downloadStarted, setDownloadStarted] = useState(false);
 
-  const handleDownloadAPK = () => {
+  const handleDownloadAPK = async () => {
     setDownloadStarted(true);
-    const downloadUrl = getApkDownloadUrl();
-    const link = document.createElement('a');
-    link.href = downloadUrl;
-    link.target = '_blank';
-    link.download = 'app-release.apk';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    let downloadUrl = 'https://github.com/azamfahd/account20/releases/download/latest/app-release.apk';
+    try {
+      const release = await fetchGitHubLatestRelease();
+      if (release && release.apkUrl) {
+        downloadUrl = release.apkUrl;
+      }
+    } catch (e) {
+      console.warn('Could not query release:', e);
+    }
+
+    try {
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => {
+        if (document.body.contains(link)) document.body.removeChild(link);
+      }, 1000);
+    } catch (err) {
+      console.warn('Anchor click error:', err);
+      window.open(downloadUrl, '_blank', 'noopener,noreferrer');
+    }
 
     setTimeout(() => {
       setDownloadStarted(false);
-    }, 5000);
+    }, 2500);
   };
 
   return (
@@ -151,7 +168,7 @@ export const InstallAppModal: React.FC<InstallAppModalProps> = ({
                   </div>
                 </div>
 
-                {/* Download Button */}
+                {/* Primary Download Button */}
                 <button
                   id="download-apk-action-btn"
                   onClick={handleDownloadAPK}
@@ -160,15 +177,51 @@ export const InstallAppModal: React.FC<InstallAppModalProps> = ({
                   {downloadStarted ? (
                     <>
                       <FileCheck className="w-4 h-4 animate-bounce" />
-                      <span>جاري تحميل ملف smart_account.apk...</span>
+                      <span>جاري بدء التحميل من مستودع GitHub...</span>
                     </>
                   ) : (
                     <>
                       <Download className="w-4 h-4" />
-                      <span>تحميل وتثبيت ملف APK (smart_account.apk) 🚀</span>
+                      <span>تحميل حزمة الـ APK المباشرة (v1.0.5) 🚀</span>
                     </>
                   )}
                 </button>
+
+                {/* Direct Download Mirrors for maximum reliability */}
+                <div className="grid grid-cols-2 gap-2 pt-1 text-[11px]">
+                  <a
+                    href="https://github.com/azamfahd/account20/releases"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="py-2 px-2.5 bg-slate-800 hover:bg-slate-750 text-emerald-400 hover:text-emerald-300 font-bold rounded-lg border border-slate-700 flex items-center justify-center gap-1.5 transition-colors text-center no-underline cursor-pointer"
+                  >
+                    <Download className="w-3 h-3" />
+                    <span>صفحة الإصدارات الرسمية (Releases)</span>
+                  </a>
+
+                  <a
+                    href="https://github.com/azamfahd/account20/releases/latest"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="py-2 px-2.5 bg-slate-800 hover:bg-slate-750 text-emerald-400 hover:text-emerald-300 font-bold rounded-lg border border-slate-700 flex items-center justify-center gap-1.5 transition-colors text-center no-underline cursor-pointer"
+                  >
+                    <Download className="w-3 h-3" />
+                    <span>أحدث إصدار (Latest Release)</span>
+                  </a>
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-slate-800/80 text-[11px]">
+                  <a
+                    href={GITHUB_RELEASES_PAGE_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-emerald-400 hover:text-emerald-300 font-bold flex items-center gap-1 transition-colors underline"
+                  >
+                    <span>صفحة الإصدارات الكاملة في المستودع (Releases)</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                  <span className="text-[10px] text-slate-400 font-mono">azamfahd/account20</span>
+                </div>
               </div>
 
               {/* Option 2: Quick PWA Web App (Secondary) */}

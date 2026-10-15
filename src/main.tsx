@@ -9,15 +9,26 @@ import { registerSW } from 'virtual:pwa-register';
 // Register Service Worker for offline caching
 if (typeof window !== 'undefined') {
   const updateSW = registerSW({
+    immediate: true,
     onNeedRefresh() {
-      if (confirm('تحديث جديد متوفر للنظام. هل تريد التحديث الآن؟')) {
-        updateSW(true);
-      }
+      // Auto apply new service worker updates in the background or prompt non-blockingly
+      updateSW(true).catch(() => {});
     },
     onOfflineReady() {
-      console.log('التطبيق جاهز للعمل بدون إنترنت (Offline Ready)');
+      console.log('✅ النظام المحاسبي جاهز للعمل أوفلاين بدون إنترنت (Offline Ready)');
     },
   });
+
+  // Listen for controllerchange to reload seamlessly when SW is activated
+  if ('serviceWorker' in navigator) {
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!refreshing) {
+        refreshing = true;
+        // Don't auto-reload if already standalone unless needed
+      }
+    });
+  }
 }
 
 // Initialize SQLite real-time database sync for native platforms (standalone APK)

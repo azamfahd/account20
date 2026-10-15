@@ -18,6 +18,7 @@ import {
   checkAppUpdates, 
   downloadDirectAPK, 
   installDownloadedAPK,
+  getApkDownloadUrl,
   applyOTAUpdate, 
   UPDATE_SAFETY_NOTICE,
   GITHUB_REPO,
@@ -58,12 +59,9 @@ export const CheckUpdatesModal: React.FC<CheckUpdatesModalProps> = ({
     }
   };
 
-  const handleDownloadAPKClick = async (force = false) => {
-    if (!force && checkResult && !checkResult.hasUpdate) {
-      setAlreadyUpToDateNotice(true);
-      return;
-    }
-    await installDownloadedAPK(checkResult?.updateUrl);
+  const handleDownloadAPKClick = async () => {
+    const url = checkResult?.updateUrl || getApkDownloadUrl();
+    await installDownloadedAPK(url);
   };
 
   useEffect(() => {
@@ -245,7 +243,7 @@ export const CheckUpdatesModal: React.FC<CheckUpdatesModalProps> = ({
                     </p>
                     <div className="flex justify-start pr-7 pt-1">
                       <button
-                        onClick={() => handleDownloadAPKClick(true)}
+                        onClick={() => handleDownloadAPKClick()}
                         className="text-[10px] font-bold text-emerald-700 hover:text-emerald-900 underline cursor-pointer"
                       >
                         تنزيل ملف الـ APK مجدداً على أي حال 📥
@@ -281,7 +279,7 @@ export const CheckUpdatesModal: React.FC<CheckUpdatesModalProps> = ({
 
                   <div className="grid grid-cols-2 gap-2">
                     <button
-                      onClick={() => handleDownloadAPKClick(false)}
+                      onClick={() => handleDownloadAPKClick()}
                       className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 active:scale-[0.98] text-emerald-300 font-bold text-xs rounded-xl border border-slate-700 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                       title="تحميل ملف APK مستقل لتثبيته يدوياً على أجهزة الأندرويد"
                     >

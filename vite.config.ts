@@ -35,7 +35,7 @@ export default defineConfig(({mode}) => {
           orientation: 'any',
           dir: 'rtl',
           lang: 'ar',
-          start_url: '/?source=pwa',
+          start_url: '/',
           scope: '/',
           categories: ['finance', 'business', 'productivity', 'utilities'],
           prefer_related_applications: false,
@@ -174,8 +174,51 @@ export default defineConfig(({mode}) => {
           ]
         },
         workbox: {
-          maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, // 10MB limit
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}']
+          maximumFileSizeToCacheInBytes: 15 * 1024 * 1024, // 15MB limit
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,json,webmanifest}'],
+          navigateFallback: '/index.html',
+          navigateFallbackAllowlist: [/^(?!\/__).*/],
+          navigateFallbackDenylist: [
+            /\.apk$/i,
+            /.*\.apk.*/i,
+            /^\/api\/.*/,
+            /^https?:\/\/github\.com\/.*/i,
+            /^https?:\/\/.*githubusercontent\.com\/.*/i
+          ],
+          ignoreURLParametersMatching: [/.*/],
+          cleanupOutdatedCaches: true,
+          clientsClaim: true,
+          skipWaiting: true,
+          runtimeCaching: [
+            {
+              urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'google-fonts-stylesheets',
+                expiration: {
+                  maxEntries: 10,
+                  maxAgeSeconds: 60 * 60 * 24 * 365,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: /^https:\/\/fonts\.gstatic\.com\/.*/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'google-fonts-webfonts',
+                expiration: {
+                  maxEntries: 30,
+                  maxAgeSeconds: 60 * 60 * 24 * 365,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+          ],
         },
         devOptions: {
           enabled: true,

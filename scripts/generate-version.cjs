@@ -41,9 +41,11 @@ if (fs.existsSync(versionJsonPath)) {
 const finalVersionCode = githubRunNumber ? Math.max(githubRunNumber, currentVersionCode + 1) : (currentVersionCode || 4);
 
 // Determine update URL (prefer VITE_APK_DOWNLOAD_URL -> GitHub repo URL -> fallback)
-const githubRepo = process.env.GITHUB_REPOSITORY || 'azamfahd/smart-accounting-system';
-const apkDownloadUrl = process.env.VITE_APK_DOWNLOAD_URL || 
-  `https://github.com/${githubRepo}/releases/download/latest/app-release.apk`;
+const githubRepo = 'azamfahd/account20';
+const envUrl = process.env.VITE_APK_DOWNLOAD_URL;
+const apkDownloadUrl = (envUrl && envUrl.includes('github.com/azamfahd/account20') && envUrl.endsWith('.apk'))
+  ? envUrl
+  : `https://github.com/${githubRepo}/releases/download/latest/app-release.apk`;
 
 const todayIso = new Date().toISOString().split('T')[0];
 

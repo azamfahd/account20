@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Smartphone, Download, X, Sparkles, ShieldCheck } from 'lucide-react';
+import { Smartphone, Download, X, Sparkles, ShieldCheck, ExternalLink } from 'lucide-react';
+import { GITHUB_RELEASES_PAGE_URL } from '../services/updateService';
 
 interface BrowserInstallBannerProps {
   show: boolean;
@@ -60,20 +61,46 @@ export const BrowserInstallBanner: React.FC<BrowserInstallBannerProps> = ({
               <Sparkles className="w-3 h-3 text-emerald-400" />
             </span>
             <span className="flex items-center gap-1">
-              <span>تخزين دائم بذاكرة الهاتف</span>
+              <span>يعمل 100% بدون إنترنت</span>
               <ShieldCheck className="w-3 h-3 text-emerald-400" />
             </span>
           </div>
 
-          {/* CTA Action */}
-          <button
-            id="open-install-options-btn"
-            onClick={onOpenInstallModal}
-            className="w-full py-2.5 px-3 bg-gradient-to-r from-emerald-650 to-emerald-500 hover:from-emerald-600 hover:to-emerald-400 active:scale-[0.98] text-white font-extrabold text-xs rounded-xl transition-all shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 cursor-pointer"
-          >
-            <Download className="w-4 h-4" />
-            <span>تثبيت البرنامج الآن (APK / PWA) 🚀</span>
-          </button>
+          {/* CTA Actions */}
+          <div className="space-y-2 pt-1">
+            <a
+              id="direct-download-apk-banner-link"
+              href="https://github.com/azamfahd/account20/releases/download/latest/app-release.apk"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full py-2.5 px-3 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 hover:to-teal-500 active:scale-[0.98] text-white font-extrabold text-xs rounded-xl transition-all shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 cursor-pointer no-underline text-center"
+            >
+              <Download className="w-4 h-4 shrink-0" />
+              <span>تحميل تطبيق الـ APK مباشرة (smart_account) 🚀</span>
+            </a>
+
+            <button
+              id="open-install-options-btn"
+              onClick={onOpenInstallModal}
+              className="w-full py-2 px-3 bg-slate-800/90 hover:bg-slate-750 active:scale-[0.98] text-slate-200 hover:text-white font-bold text-[11px] rounded-xl border border-slate-700/80 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
+              <span>تثبيت PWA أو استعراض خيارات التثبيت</span>
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5 border-t border-slate-800/60">
+            <a
+              href={GITHUB_RELEASES_PAGE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-emerald-400 hover:text-emerald-300 font-bold flex items-center gap-1 transition-colors underline"
+            >
+              <span>صفحة الإصدارات في المستودع (Releases)</span>
+              <ExternalLink className="w-3 h-3" />
+            </a>
+            <span className="font-mono text-[9px] text-slate-400">azamfahd/account20</span>
+          </div>
         </motion.div>
       )}
     </AnimatePresence>

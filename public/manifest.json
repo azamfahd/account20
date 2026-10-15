@@ -3,7 +3,7 @@
   "short_name": "المحاسبي الذكي",
   "description": "نظام محاسبة ومبيعات متكامل يعمل بالكامل محلياً وأوفلاين مع مستشار مالي ذكي ودعم قارئ الباركود والطباعة وإدارة الديون.",
   "id": "/",
-  "start_url": "/?source=pwa",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "display_override": [
@@ -28,11 +28,11 @@
     {
       "platform": "play",
       "id": "app.azamfahd.account20.twa",
-      "url": "https://play.google.com/store/apps/details?id=app.azamfahd.account20.twa"
+      "url": "https://github.com/azamfahd/account20/releases"
     },
     {
       "platform": "webapp",
-      "url": "https://account20.netlify.app/manifest.json"
+      "url": "https://azamfahd.github.io/account20/manifest.json"
     }
   ],
   "shortcuts": [

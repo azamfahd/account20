@@ -94,6 +94,14 @@ async function startServer() {
     }
   });
 
+  // Direct APK Download Gateway
+  app.get(['/api/download/apk', '/api/download/app-release.apk', '/api/download/smart_account.apk'], (req, res) => {
+    const directGitHubApkUrl = 'https://github.com/azamfahd/account20/releases/download/latest/app-release.apk';
+    res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+    res.setHeader('Content-Disposition', 'attachment; filename="smart_account.apk"');
+    res.redirect(directGitHubApkUrl);
+  });
+
   // Vite middleware
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

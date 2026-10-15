@@ -11,9 +11,10 @@ import { Filesystem, Directory } from '@capacitor/filesystem';
 import { getLatestAppVersion } from './firebase';
 
 export const GITHUB_REPO = 'azamfahd/account20';
-export const GITHUB_ALT_REPO = 'azamfahd/smart-accounting-system';
 export const GITHUB_RELEASES_PAGE_URL = `https://github.com/${GITHUB_REPO}/releases`;
 export const GITHUB_RELEASES_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
+
+let cachedReleaseApkUrl: string | null = null;
 
 export interface GitHubReleaseAsset {
   name: string;
@@ -26,6 +27,7 @@ export interface GitHubReleaseAsset {
 export interface GitHubReleaseInfo {
   tag_name: string;
   versionName: string;
+  versionCode?: number;
   name: string;
   body: string;
   published_at: string;
@@ -77,100 +79,134 @@ export const UPDATE_SAFETY_NOTICE =
  * 3. Official GitHub Releases page
  */
 export function getApkDownloadUrl(fallbackUrl?: string): string {
-  if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_APK_DOWNLOAD_URL) {
-    return import.meta.env.VITE_APK_DOWNLOAD_URL;
+  if (fallbackUrl && fallbackUrl.toLowerCase().includes('github.com/azamfahd/account20') && fallbackUrl.toLowerCase().includes('.apk')) {
+    return fallbackUrl;
   }
-  return fallbackUrl || `https://github.com/${GITHUB_REPO}/releases/latest/download/app-release.apk`;
+  if (cachedReleaseApkUrl) {
+    return cachedReleaseApkUrl;
+  }
+  if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_APK_DOWNLOAD_URL) {
+    const envUrl = import.meta.env.VITE_APK_DOWNLOAD_URL;
+    if (envUrl && envUrl.includes('github.com/azamfahd/account20') && envUrl.toLowerCase().includes('.apk')) {
+      return envUrl;
+    }
+  }
+  return `https://github.com/${GITHUB_REPO}/releases/download/latest/app-release.apk`;
 }
 
 /**
- * Directly queries GitHub Releases API with automatic multi-repo failover:
- * Primary: azamfahd/account20
- * Secondary: azamfahd/smart-accounting-system
+ * Directly queries GitHub Releases API for repository: azamfahd/account20
+ * Fully parses release metadata, .apk assets, and version.json for build synchronization.
  */
 export async function fetchGitHubLatestRelease(): Promise<GitHubReleaseInfo | null> {
-  const reposToTry = [GITHUB_REPO, GITHUB_ALT_REPO];
+  const repo = GITHUB_REPO;
+  try {
+    let data: any = null;
 
-  for (const repo of reposToTry) {
+    // 1. Try /releases/latest
     try {
-      let data: any = null;
+      const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest?t=${Date.now()}`, {
+        headers: {
+          'Accept': 'application/vnd.github.v3+json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+        },
+      });
 
-      // 1. Try /releases/latest
+      if (res.ok) {
+        data = await res.json();
+      }
+    } catch (e) {
+      console.warn(`[UpdateService] Latest release fetch error for ${repo}:`, e);
+    }
+
+    // 2. Fallback to /releases list if /latest returned 404 or empty
+    if (!data || !data.tag_name) {
       try {
-        const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest?t=${Date.now()}`, {
+        const listRes = await fetch(`https://api.github.com/repos/${repo}/releases?t=${Date.now()}`, {
           headers: {
             'Accept': 'application/vnd.github.v3+json',
             'Cache-Control': 'no-cache, no-store, must-revalidate',
           },
         });
-
-        if (res.ok) {
-          data = await res.json();
+        if (listRes.ok) {
+          const list = await listRes.json();
+          if (Array.isArray(list) && list.length > 0) {
+            data = list[0];
+          }
         }
       } catch (e) {
-        console.warn(`[UpdateService] Latest release fetch error for ${repo}:`, e);
+        console.warn(`[UpdateService] Releases list fetch error for ${repo}:`, e);
       }
+    }
 
-      // 2. Fallback to /releases list if /latest returned 404 or empty
-      if (!data || !data.tag_name) {
+    if (data && data.tag_name) {
+      const tagName = data.tag_name || 'latest';
+      let cleanVersion = tagName.replace(/^v/i, '').trim();
+
+      // Search assets for genuine .apk file and version.json
+      const assets: GitHubReleaseAsset[] = Array.isArray(data.assets)
+        ? data.assets.map((a: any) => ({
+            name: a.name || '',
+            browser_download_url: a.browser_download_url || '',
+            size: a.size || 0,
+            download_count: a.download_count || 0,
+            created_at: a.created_at || '',
+          }))
+        : [];
+
+      // Find apk asset (prioritize smart_account.apk or app-release.apk)
+      const apkAsset = assets.find(
+        (a) => a.name.toLowerCase().endsWith('.apk') || a.browser_download_url.toLowerCase().endsWith('.apk')
+      );
+
+      const hasDirectApk = Boolean(apkAsset && apkAsset.browser_download_url);
+      const apkUrl = hasDirectApk && apkAsset
+        ? apkAsset.browser_download_url
+        : `https://github.com/${repo}/releases/download/${tagName}/app-release.apk`;
+
+      // Cache resolved live APK download URL
+      cachedReleaseApkUrl = apkUrl;
+
+      // Extract version info from version.json asset if present
+      let releaseVersionCode: number | undefined;
+      const versionAsset = assets.find((a) => a.name.toLowerCase() === 'version.json');
+      if (versionAsset && versionAsset.browser_download_url) {
         try {
-          const listRes = await fetch(`https://api.github.com/repos/${repo}/releases?t=${Date.now()}`, {
-            headers: {
-              'Accept': 'application/vnd.github.v3+json',
-              'Cache-Control': 'no-cache, no-store, must-revalidate',
-            },
-          });
-          if (listRes.ok) {
-            const list = await listRes.json();
-            if (Array.isArray(list) && list.length > 0) {
-              data = list[0];
-            }
+          const vRes = await fetch(versionAsset.browser_download_url, { cache: 'no-store' });
+          if (vRes.ok) {
+            const vData = await vRes.json();
+            if (vData.version) cleanVersion = vData.version;
+            if (vData.versionCode) releaseVersionCode = vData.versionCode;
           }
         } catch (e) {
-          console.warn(`[UpdateService] Releases list fetch error for ${repo}:`, e);
+          console.warn('[UpdateService] Failed to parse version.json from release assets:', e);
         }
       }
 
-      if (data && data.tag_name) {
-        const tagName = data.tag_name || 'v1.0.0';
-        const cleanVersion = tagName.replace(/^v/i, '').trim();
-
-        // Search assets for genuine .apk file
-        const assets: GitHubReleaseAsset[] = Array.isArray(data.assets)
-          ? data.assets.map((a: any) => ({
-              name: a.name || '',
-              browser_download_url: a.browser_download_url || '',
-              size: a.size || 0,
-              download_count: a.download_count || 0,
-              created_at: a.created_at || '',
-            }))
-          : [];
-
-        const apkAsset = assets.find(
-          (a) => a.name.toLowerCase().endsWith('.apk') || a.browser_download_url.toLowerCase().endsWith('.apk')
-        );
-
-        const hasDirectApk = Boolean(apkAsset && apkAsset.browser_download_url);
-        const apkUrl = hasDirectApk && apkAsset
-          ? apkAsset.browser_download_url
-          : `https://github.com/${repo}/releases/download/${tagName}/app-release.apk`;
-
-        return {
-          tag_name: tagName,
-          versionName: cleanVersion,
-          name: data.name || `إصدار GitHub جديد ${tagName}`,
-          body: data.body || 'تحديث جديد صادر مباشرة من مستودع GitHub يتضمن تحسينات وميزات جديدة.',
-          published_at: data.published_at || new Date().toISOString(),
-          html_url: data.html_url || `https://github.com/${repo}/releases/tag/${tagName}`,
-          assets,
-          apkUrl,
-          hasDirectApk,
-          repo,
-        };
+      // If cleanVersion is still 'latest' or non-numeric, extract from title or body
+      if (cleanVersion.toLowerCase() === 'latest') {
+        const titleMatch = (data.name + ' ' + (data.body || '')).match(/v?(\d+\.\d+(\.\d+)?)/i);
+        if (titleMatch) {
+          cleanVersion = titleMatch[1];
+        }
       }
-    } catch (err) {
-      console.warn(`[UpdateService] Failed to query repo ${repo}:`, err);
+
+      return {
+        tag_name: tagName,
+        versionName: cleanVersion,
+        versionCode: releaseVersionCode,
+        name: data.name || `إصدار جديد من المستودع (${cleanVersion})`,
+        body: data.body || 'تحديث جديد صادر مباشرة من مستودع GitHub يتضمن تحسينات وميزات جديدة.',
+        published_at: data.published_at || new Date().toISOString(),
+        html_url: data.html_url || `https://github.com/${repo}/releases/tag/${tagName}`,
+        assets,
+        apkUrl,
+        hasDirectApk,
+        repo,
+      };
     }
+  } catch (err) {
+    console.warn(`[UpdateService] Failed to query repo ${repo}:`, err);
   }
 
   return null;
@@ -258,7 +294,9 @@ export async function checkAppUpdates(): Promise<UpdateCheckResult> {
 
   // Check GitHub Releases (if newer than Firebase, prefer GitHub; otherwise keep Firebase)
   if (githubRelease && githubRelease.versionName) {
-    if (compareSemver(githubRelease.versionName, bestVersionStr) > 0 || bestSource === 'FALLBACK') {
+    const isNewerSemver = compareSemver(githubRelease.versionName, bestVersionStr) > 0;
+    const isNewerCode = Boolean(githubRelease.versionCode && githubRelease.versionCode > currentCode);
+    if (isNewerSemver || isNewerCode || bestSource === 'FALLBACK') {
       bestVersionStr = githubRelease.versionName;
       bestSource = 'GITHUB';
       bestUpdateUrl = githubRelease.apkUrl;
@@ -277,7 +315,8 @@ export async function checkAppUpdates(): Promise<UpdateCheckResult> {
     hasDirectApk = remoteInfo.updateUrl.toLowerCase().includes('.apk');
   }
 
-  const hasUpdate = compareSemver(bestVersionStr, currentVersion) > 0;
+  const hasUpdate = compareSemver(bestVersionStr, currentVersion) > 0 ||
+    Boolean(githubRelease?.versionCode && githubRelease.versionCode > currentCode);
 
   return {
     hasUpdate,
@@ -369,15 +408,22 @@ export function downloadDirectAPK(targetUrl?: string): void {
   }
 
   // Real direct APK download
-  const link = document.createElement('a');
-  link.href = url;
-  link.target = '_blank';
-  link.rel = 'noopener noreferrer';
-  const fileName = url.split('/').pop()?.split('?')[0] || 'smart-pos-accounting.apk';
-  link.download = fileName.endsWith('.apk') ? fileName : `${fileName}.apk`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+  // Note: We do NOT set link.download on cross-origin GitHub links because
+  // the HTML5 spec disallows it and it triggers service-worker navigation intercept resulting in .htm files!
+  // GitHub's servers already send Content-Disposition: attachment; filename="app-release.apk"
+  try {
+    const link = document.createElement('a');
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(() => {
+      if (document.body.contains(link)) document.body.removeChild(link);
+    }, 1000);
+  } catch (e) {
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
 }
 
 /**

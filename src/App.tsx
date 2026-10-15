@@ -1040,11 +1040,7 @@ export default function App() {
     }
   };
 
-  const handleDownloadAPK = async (force = false) => {
-    if (!force && remoteAppConfig && !hasPendingUpdate) {
-      showNotification(`✨ التطبيق مثبت لديك ومتوافق بأحدث إصدار بالفعل (v${remoteAppConfig.latestVersion || '1.0.0'}) - لا داعي لإعادة التنزيل!`, 'success');
-      return;
-    }
+  const handleDownloadAPK = async (_force = false) => {
     if (remoteAppConfig?.latestVersion) {
       if (typeof localStorage !== 'undefined') {
         localStorage.setItem('app_installed_version_str', remoteAppConfig.latestVersion);
@@ -1052,11 +1048,7 @@ export default function App() {
       setCurrentAppVersion(remoteAppConfig.latestVersion);
     }
     const url = remoteAppConfig?.apkUrl || getApkDownloadUrl();
-    if (url.toLowerCase().includes('.apk')) {
-      showNotification('جاري بدء تثبيت حزمة الـ APK فوق النسخة الحالية... (تثبيت آمن مع الاحتفاظ ببياناتك)', 'success');
-    } else {
-      showNotification('جاري فتح صفحة الإصدارات الرسمية في مستودع GitHub...', 'success');
-    }
+    showNotification('جاري بدء تحميل وتثبيت حزمة الـ APK مباشرة من مستودع GitHub... (تثبيت آمن مع الاحتفاظ بكافة بياناتك)', 'success');
     const res = await installDownloadedAPK(url);
     if (res.message && res.method !== 'DIRECT_BROWSER') {
       showNotification(res.message, 'success');
