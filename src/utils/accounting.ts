@@ -196,6 +196,323 @@ export function calculateSmartStockThreshold(saleItems: SaleItem[] = [], product
   return Math.max(3, Math.min(1000, calculated));
 }
 
+export interface SupplierBreakdownMetrics {
+  supplierId: number;
+  currentBalance: number;
+  pendingDebtDues: number;
+  totalAllDues: number;
+  totalPaid: number;
+  totalRequiredBeforeSettlement: number;
+  totalRequiredBeforeSettlementAll: number;
+  inventoryStock: number;
+  inventoryCostValue: number;
+  totalSoldQuantity: number;
+  totalSoldCostValue: number;
+  settledSoldCostValue: number;
+  totalInventoryAndSoldCost: number;
+  productsCount: number;
+  paymentsCount: number;
+}
+
+export interface SupplierAndCashBasisSummary {
+  bySupplierId: Map<number, SupplierBreakdownMetrics>;
+  global: {
+    currentBalance: number;
+    pendingDebtDues: number;
+    totalAllDues: number;
+    totalPaid: number;
+    totalRequiredBeforeSettlement: number;
+    totalRequiredBeforeSettlementAll: number;
+    inventoryCostValue: number;
+    soldCostValue: number;
+    settledSoldCostValue: number;
+    totalInventoryAndSoldCost: number;
+    productsCount: number;
+    paymentsCount: number;
+  };
+  allSoldCost: number;
+  allSettledSoldCost: number;
+  allPendingSoldCost: number;
+  realizedProfit: number;
+  pendingProfit: number;
+  saleCollectionStateMap: Map<number, {
+    totalAmount: number;
+    collectedAmount: number;
+    uncollectedAmount: number;
+    collectedRatio: number;
+    uncollectedRatio: number;
+  }>;
+}
+
+/**
+ * Computes per-sale collection ratios (cash + repaid customer debt vs unpaid credit)
+ * and derives exact current, pending, and total supplier dues alongside realized vs pending profit.
+ */
+export function calculateSupplierAndCashBasisMetrics(
+  suppliers: Supplier[] = [],
+  products: Product[] = [],
+  sales: Sale[] = [],
+  saleItems: SaleItem[] = [],
+  supplierPayments: SupplierPayment[] = [],
+  customers: Customer[] = []
+): SupplierAndCashBasisSummary {
+  const productMap = new Map<number, Product>();
+  products.forEach(p => {
+    if (p.id !== undefined) productMap.set(p.id, p);
+  });
+
+  const customerMap = new Map<number, Customer>();
+  customers.forEach(c => {
+    if (c.id !== undefined) customerMap.set(c.id, c);
+  });
+
+  const saleCollectionStateMap = new Map<number, {
+    totalAmount: number;
+    collectedAmount: number;
+    uncollectedAmount: number;
+    collectedRatio: number;
+    uncollectedRatio: number;
+  }>();
+
+  // Track how much uncollected debt is already accounted for by tracked sales per customer
+  const trackedUncollectedByCustomer = new Map<number, number>();
+  const untrackedDebtSalesByCustomer = new Map<number, Sale[]>();
+
+  sales.forEach(sale => {
+    if (sale.id === undefined) return;
+    const total = Math.max(0, Number(sale.total_amount || 0));
+
+    if (sale.collected_amount !== undefined) {
+      const collected = Math.min(total, Math.max(0, Number(sale.collected_amount || 0)));
+      const uncollected = Math.max(0, total - collected);
+      const collectedRatio = total > 0 ? Math.min(1, collected / total) : (sale.payment_type === 'cash' ? 1 : 0);
+      const uncollectedRatio = Math.max(0, 1 - collectedRatio);
+
+      saleCollectionStateMap.set(sale.id, {
+        totalAmount: total,
+        collectedAmount: collected,
+        uncollectedAmount: uncollected,
+        collectedRatio,
+        uncollectedRatio,
+      });
+
+      if (sale.customer_id != null && uncollected > 0) {
+        trackedUncollectedByCustomer.set(
+          sale.customer_id,
+          (trackedUncollectedByCustomer.get(sale.customer_id) || 0) + uncollected
+        );
+      }
+      return;
+    }
+
+    if (sale.payment_type !== 'debt') {
+      saleCollectionStateMap.set(sale.id, {
+        totalAmount: total,
+        collectedAmount: total,
+        uncollectedAmount: 0,
+        collectedRatio: 1,
+        uncollectedRatio: 0,
+      });
+      return;
+    }
+
+    // Legacy / untracked debt sale
+    if (sale.customer_id != null) {
+      const list = untrackedDebtSalesByCustomer.get(sale.customer_id) || [];
+      list.push(sale);
+      untrackedDebtSalesByCustomer.set(sale.customer_id, list);
+    } else {
+      const paidAtCheckout = Math.min(total, Math.max(0, Number(sale.paid_amount || 0)));
+      const uncollected = Math.max(0, total - paidAtCheckout);
+      const collectedRatio = total > 0 ? Math.min(1, paidAtCheckout / total) : 0;
+      const uncollectedRatio = Math.max(0, 1 - collectedRatio);
+      saleCollectionStateMap.set(sale.id, {
+        totalAmount: total,
+        collectedAmount: paidAtCheckout,
+        uncollectedAmount: uncollected,
+        collectedRatio,
+        uncollectedRatio,
+      });
+    }
+  });
+
+  // Allocate each customer's actual remaining debt balance onto their newest untracked debt sales first (LIFO for remaining = FIFO repayment)
+  untrackedDebtSalesByCustomer.forEach((custSales, customerId) => {
+    const cust = customerMap.get(customerId);
+    const custPositiveBalance = Math.max(0, Number(cust?.balance || 0));
+    const trackedUncollected = trackedUncollectedByCustomer.get(customerId) || 0;
+    let remainingPool = Math.max(0, custPositiveBalance - trackedUncollected);
+
+    const sortedNewestFirst = [...custSales].sort((a, b) => {
+      const timeDiff = new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+      if (timeDiff !== 0) return timeDiff;
+      return (b.id || 0) - (a.id || 0);
+    });
+
+    sortedNewestFirst.forEach(sale => {
+      if (sale.id === undefined) return;
+      const total = Math.max(0, Number(sale.total_amount || 0));
+      const paidAtCheckout = Math.min(total, Math.max(0, Number(sale.paid_amount || 0)));
+      const maxUnpaidForSale = Math.max(0, total - paidAtCheckout);
+      const unpaidNow = Math.min(maxUnpaidForSale, remainingPool);
+      remainingPool = Math.max(0, remainingPool - unpaidNow);
+
+      const collectedNow = Math.max(0, total - unpaidNow);
+      const collectedRatio = total > 0 ? Math.min(1, collectedNow / total) : 0;
+      const uncollectedRatio = Math.max(0, 1 - collectedRatio);
+
+      saleCollectionStateMap.set(sale.id, {
+        totalAmount: total,
+        collectedAmount: collectedNow,
+        uncollectedAmount: unpaidNow,
+        collectedRatio,
+        uncollectedRatio,
+      });
+    });
+  });
+
+  const saleMap = new Map<number, Sale>();
+  sales.forEach(s => {
+    if (s.id !== undefined) saleMap.set(s.id, s);
+  });
+
+  // Initialize supplier accumulators
+  const bySupplierId = new Map<number, SupplierBreakdownMetrics>();
+  const paymentsBySupplier = new Map<number, { sum: number; count: number }>();
+
+  supplierPayments.forEach(p => {
+    const sid = p.supplier_id;
+    const prev = paymentsBySupplier.get(sid) || { sum: 0, count: 0 };
+    paymentsBySupplier.set(sid, {
+      sum: prev.sum + (Number(p.amount) || 0),
+      count: prev.count + 1,
+    });
+  });
+
+  suppliers.forEach(s => {
+    if (s.id === undefined) return;
+    const sProducts = products.filter(p => p.supplier_id === s.id);
+    const invStock = sProducts.reduce((acc, p) => acc + (Number(p.stock_quantity) || 0), 0);
+    const invCost = sProducts.reduce((acc, p) => acc + ((Number(p.stock_quantity) || 0) * (Number(p.cost_price) || 0)), 0);
+    const payStats = paymentsBySupplier.get(s.id) || { sum: 0, count: 0 };
+    const currentBalance = Number(s.balance || 0);
+
+    bySupplierId.set(s.id, {
+      supplierId: s.id,
+      currentBalance,
+      pendingDebtDues: 0,
+      totalAllDues: currentBalance,
+      totalPaid: payStats.sum,
+      totalRequiredBeforeSettlement: currentBalance + payStats.sum,
+      totalRequiredBeforeSettlementAll: currentBalance + payStats.sum,
+      inventoryStock: invStock,
+      inventoryCostValue: invCost,
+      totalSoldQuantity: 0,
+      totalSoldCostValue: 0,
+      settledSoldCostValue: 0,
+      totalInventoryAndSoldCost: invCost,
+      productsCount: sProducts.length,
+      paymentsCount: payStats.count,
+    });
+  });
+
+  let allSoldCost = 0;
+  let allSettledSoldCost = 0;
+  let allPendingSoldCost = 0;
+  let realizedProfit = 0;
+  let pendingProfit = 0;
+
+  saleItems.forEach(item => {
+    const prod = productMap.get(item.product_id);
+    const qty = Number(item.quantity || 0);
+    const salePrice = Number(item.price_at_sale || 0);
+    const unitCost = prod ? Number(prod.cost_price || 0) : salePrice * 0.75;
+    const itemCost = unitCost * qty;
+    const itemProfit = (salePrice - unitCost) * qty;
+
+    const saleObj = saleMap.get(item.sale_id);
+    const collectionState = saleCollectionStateMap.get(item.sale_id);
+
+    let collectedRatio = 1;
+    let uncollectedRatio = 0;
+    if (collectionState) {
+      collectedRatio = collectionState.collectedRatio;
+      uncollectedRatio = collectionState.uncollectedRatio;
+    } else if (saleObj && saleObj.payment_type === 'debt') {
+      const total = Math.max(0, Number(saleObj.total_amount || 0));
+      const paid = Math.min(total, Math.max(0, Number(saleObj.paid_amount || 0)));
+      collectedRatio = total > 0 ? paid / total : 0;
+      uncollectedRatio = Math.max(0, 1 - collectedRatio);
+    }
+
+    allSoldCost += itemCost;
+    allSettledSoldCost += itemCost * collectedRatio;
+    allPendingSoldCost += itemCost * uncollectedRatio;
+    realizedProfit += itemProfit * collectedRatio;
+    pendingProfit += itemProfit * uncollectedRatio;
+
+    if (prod?.supplier_id != null) {
+      const entry = bySupplierId.get(prod.supplier_id);
+      if (entry) {
+        entry.totalSoldQuantity += qty;
+        entry.totalSoldCostValue += itemCost;
+        entry.settledSoldCostValue += itemCost * collectedRatio;
+        entry.pendingDebtDues += itemCost * uncollectedRatio;
+      }
+    }
+  });
+
+  // Finalize derived supplier sums & global totals
+  let globalCurrentBalance = 0;
+  let globalPendingDebtDues = 0;
+  let globalPaid = 0;
+  let globalInventoryCost = 0;
+  let globalSoldCost = 0;
+  let globalSettledSoldCost = 0;
+
+  bySupplierId.forEach(entry => {
+    entry.totalAllDues = entry.currentBalance + entry.pendingDebtDues;
+    entry.totalRequiredBeforeSettlementAll = entry.currentBalance + entry.pendingDebtDues + entry.totalPaid;
+    entry.totalInventoryAndSoldCost = entry.inventoryCostValue + entry.totalSoldCostValue;
+
+    globalCurrentBalance += entry.currentBalance;
+    globalPendingDebtDues += entry.pendingDebtDues;
+    globalInventoryCost += entry.inventoryCostValue;
+    globalSoldCost += entry.totalSoldCostValue;
+    globalSettledSoldCost += entry.settledSoldCostValue;
+  });
+
+  supplierPayments.forEach(p => {
+    globalPaid += Number(p.amount || 0);
+  });
+
+  const globalTotalAllDues = globalCurrentBalance + globalPendingDebtDues;
+
+  return {
+    bySupplierId,
+    global: {
+      currentBalance: globalCurrentBalance,
+      pendingDebtDues: globalPendingDebtDues,
+      totalAllDues: globalTotalAllDues,
+      totalPaid: globalPaid,
+      totalRequiredBeforeSettlement: globalCurrentBalance + globalPaid,
+      totalRequiredBeforeSettlementAll: globalTotalAllDues + globalPaid,
+      inventoryCostValue: globalInventoryCost,
+      soldCostValue: globalSoldCost,
+      settledSoldCostValue: globalSettledSoldCost,
+      totalInventoryAndSoldCost: globalInventoryCost + globalSoldCost,
+      productsCount: products.filter(p => p.supplier_id != null).length,
+      paymentsCount: supplierPayments.length,
+    },
+    allSoldCost,
+    allSettledSoldCost,
+    allPendingSoldCost,
+    realizedProfit,
+    pendingProfit,
+    saleCollectionStateMap,
+  };
+}
+
 /**
  * Calculates metrics for a specific supplier or all suppliers.
  */
@@ -204,54 +521,68 @@ export function calculateSupplierMetrics(
   suppliers: Supplier[] = [],
   products: Product[] = [],
   saleItems: SaleItem[] = [],
-  supplierPayments: SupplierPayment[] = []
+  supplierPayments: SupplierPayment[] = [],
+  sales: Sale[] = [],
+  customers: Customer[] = []
 ) {
-  const isAll = supplierId === 'all';
-  const targetSupplierId = isAll ? null : Number(supplierId);
-
-  const filteredSuppliers = isAll
-    ? suppliers
-    : suppliers.filter(s => s.id === targetSupplierId);
-
-  const totalBalanceDue = filteredSuppliers.reduce((sum, s) => sum + (s.balance || 0), 0);
-
-  const filteredPayments = isAll
-    ? supplierPayments
-    : supplierPayments.filter(p => p.supplier_id === targetSupplierId);
-
-  const totalPaid = filteredPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
-  const totalRequiredBeforeSettlement = totalBalanceDue + totalPaid;
-
-  const supplierProducts = isAll
-    ? products.filter(p => p.supplier_id != null)
-    : products.filter(p => p.supplier_id === targetSupplierId);
-
-  const supplierProductIds = new Set(supplierProducts.map(p => p.id));
-
-  const totalInventoryCostValue = supplierProducts.reduce(
-    (sum, p) => sum + ((p.stock_quantity || 0) * (p.cost_price || 0)),
-    0
+  const computed = calculateSupplierAndCashBasisMetrics(
+    suppliers,
+    products,
+    sales,
+    saleItems,
+    supplierPayments,
+    customers
   );
 
-  let totalSoldCostValue = 0;
-  saleItems.forEach(item => {
-    if (supplierProductIds.has(item.product_id)) {
-      const prod = supplierProducts.find(p => p.id === item.product_id);
-      const unitCost = prod ? prod.cost_price : (item.price_at_sale * 0.75);
-      totalSoldCostValue += unitCost * item.quantity;
-    }
-  });
+  if (supplierId === 'all') {
+    const g = computed.global;
+    return {
+      totalBalanceDue: g.currentBalance,
+      pendingDebtDues: g.pendingDebtDues,
+      totalAllDues: g.totalAllDues,
+      totalPaid: g.totalPaid,
+      totalRequiredBeforeSettlement: g.totalRequiredBeforeSettlement,
+      totalRequiredBeforeSettlementAll: g.totalRequiredBeforeSettlementAll,
+      totalInventoryCostValue: g.inventoryCostValue,
+      totalSoldCostValue: g.soldCostValue,
+      settledSoldCostValue: g.settledSoldCostValue,
+      totalInventoryAndSoldCost: g.totalInventoryAndSoldCost,
+      productsCount: g.productsCount,
+      paymentsCount: g.paymentsCount
+    };
+  }
 
-  const totalInventoryAndSoldCost = totalInventoryCostValue + totalSoldCostValue;
+  const targetSupplierId = Number(supplierId);
+  const s = computed.bySupplierId.get(targetSupplierId);
+  if (!s) {
+    return {
+      totalBalanceDue: 0,
+      pendingDebtDues: 0,
+      totalAllDues: 0,
+      totalPaid: 0,
+      totalRequiredBeforeSettlement: 0,
+      totalRequiredBeforeSettlementAll: 0,
+      totalInventoryCostValue: 0,
+      totalSoldCostValue: 0,
+      settledSoldCostValue: 0,
+      totalInventoryAndSoldCost: 0,
+      productsCount: 0,
+      paymentsCount: 0
+    };
+  }
 
   return {
-    totalBalanceDue,
-    totalPaid,
-    totalRequiredBeforeSettlement,
-    totalInventoryCostValue,
-    totalSoldCostValue,
-    totalInventoryAndSoldCost,
-    productsCount: supplierProducts.length,
-    paymentsCount: filteredPayments.length
+    totalBalanceDue: s.currentBalance,
+    pendingDebtDues: s.pendingDebtDues,
+    totalAllDues: s.totalAllDues,
+    totalPaid: s.totalPaid,
+    totalRequiredBeforeSettlement: s.totalRequiredBeforeSettlement,
+    totalRequiredBeforeSettlementAll: s.totalRequiredBeforeSettlementAll,
+    totalInventoryCostValue: s.inventoryCostValue,
+    totalSoldCostValue: s.totalSoldCostValue,
+    settledSoldCostValue: s.settledSoldCostValue,
+    totalInventoryAndSoldCost: s.totalInventoryAndSoldCost,
+    productsCount: s.productsCount,
+    paymentsCount: s.paymentsCount
   };
 }

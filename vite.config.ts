@@ -272,6 +272,7 @@ export default defineConfig(({mode}) => {
     },
     server: {
       hmr: false,
+      ws: false,
     },
     preview: {
       host: '0.0.0.0',

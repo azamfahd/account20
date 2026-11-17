@@ -136,6 +136,7 @@ import {
 } from 'recharts';
 import { App as CapApp } from '@capacitor/app';
 import { db, seedDatabase, Product, Customer, Sale, Supplier } from './db';
+import { calculateSupplierAndCashBasisMetrics } from './utils/accounting';
 import { 
   generateDeviceID, 
   generateLicenseKey, 
@@ -194,6 +195,12 @@ interface Summary {
   totalItemsSold: number;
   totalSupplierPayments: number;
   totalOriginalSupplierCost: number;
+  pendingSupplierDues?: number;
+  totalAllSupplierDues?: number;
+  supplierSettledSoldCost?: number;
+  totalSupplierSoldCost?: number;
+  pendingProfit?: number;
+  grossProfitAllSales?: number;
   totalExpenses?: number;
   netProfit?: number;
 }
@@ -316,32 +323,36 @@ export default function App() {
       if (d >= startOfMonth) monthlySales += s.total_amount;
     });
 
-    const totalProfit = allSaleItems.reduce((sum, item) => {
-      const product = productMap.get(item.product_id);
-      if (product) {
-        return sum + (item.price_at_sale - product.cost_price) * item.quantity;
-      }
-      return sum;
-    }, 0);
+    const allSuppliers = await db.suppliers.toArray();
+    const allSupplierPayments = await db.supplierPayments.toArray();
 
-    const totalCostOfSoldItems = allSaleItems.reduce((sum, item) => {
-      const product = productMap.get(item.product_id);
-      if (product) {
-        return sum + (product.cost_price * item.quantity);
-      }
-      return sum;
-    }, 0);
+    const cashBasisMetrics = calculateSupplierAndCashBasisMetrics(
+      allSuppliers,
+      allProducts,
+      allSales,
+      allSaleItems,
+      allSupplierPayments,
+      allCustomers
+    );
 
+    const totalProfit = cashBasisMetrics.realizedProfit;
+    const pendingProfit = cashBasisMetrics.pendingProfit;
+    const grossProfitAllSales = totalProfit + pendingProfit;
+
+    const totalCostOfSoldItems = cashBasisMetrics.allSoldCost;
     const totalItemsSold = allSaleItems.reduce((sum, item) => sum + item.quantity, 0);
 
     const totalOriginalInventoryCost = totalInventoryCost + totalCostOfSoldItems;
     const totalOriginalInventorySaleValue = totalSaleValueOfRemainingInventory + totalSales;
     const expectedRemainingProfit = totalSaleValueOfRemainingInventory - totalInventoryCost;
 
-    const totalSupplierBalances = (await db.suppliers.toArray()).reduce((sum, s) => sum + (s.balance || 0), 0);
-    const allSupplierPayments = await db.supplierPayments.toArray();
-    const totalSupplierPayments = allSupplierPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
-    const totalOriginalSupplierCost = totalSupplierBalances + totalSupplierPayments;
+    const totalSupplierBalances = cashBasisMetrics.global.currentBalance;
+    const totalSupplierPayments = cashBasisMetrics.global.totalPaid;
+    const totalOriginalSupplierCost = cashBasisMetrics.global.totalRequiredBeforeSettlement;
+    const pendingSupplierDues = cashBasisMetrics.global.pendingDebtDues;
+    const totalAllSupplierDues = cashBasisMetrics.global.totalAllDues;
+    const supplierSettledSoldCost = cashBasisMetrics.global.settledSoldCostValue;
+    const totalSupplierSoldCost = cashBasisMetrics.global.soldCostValue;
 
     const allExpenses = await db.expenses.toArray();
     const totalExpenses = allExpenses.reduce((sum, exp) => sum + (exp.amount || 0), 0);
@@ -354,6 +365,8 @@ export default function App() {
       lowStock: lowStockCount,
       expiringStock: expiringStockCount,
       totalProfit,
+      pendingProfit,
+      grossProfitAllSales,
       totalInventoryCost,
       monthlySales,
       todaySales,
@@ -367,6 +380,10 @@ export default function App() {
       totalItemsSold,
       totalSupplierPayments,
       totalOriginalSupplierCost,
+      pendingSupplierDues,
+      totalAllSupplierDues,
+      supplierSettledSoldCost,
+      totalSupplierSoldCost,
       totalExpenses,
       netProfit
     };
@@ -678,7 +695,13 @@ export default function App() {
       totalStockQuantity: 0,
       totalItemsSold: 0,
       totalSupplierPayments: 0,
-      totalOriginalSupplierCost: 0
+      totalOriginalSupplierCost: 0,
+      pendingSupplierDues: 0,
+      totalAllSupplierDues: 0,
+      supplierSettledSoldCost: 0,
+      totalSupplierSoldCost: 0,
+      pendingProfit: 0,
+      grossProfitAllSales: 0
     };
   });
 
@@ -1216,17 +1239,23 @@ export default function App() {
     return allCashWithdrawals.filter(w => !w.is_repaid).reduce((sum, w) => sum + w.amount, 0);
   }, [allCashWithdrawals]);
 
-  // 1. Current cycle cash sales (direct cash sales)
+  // 1. Current cycle cash sales (direct cash sales + partial checkout down-payments on debt sales)
   const currentCycleCashSales = React.useMemo(() => {
-    return currentCycleSales.filter(s => s.payment_type === 'cash').reduce((sum, s) => sum + s.total_amount, 0);
+    return currentCycleSales.reduce((sum, s) => {
+      if (s.payment_type === 'cash') return sum + s.total_amount;
+      return sum + Math.min(s.total_amount, Math.max(0, Number(s.paid_amount || 0)));
+    }, 0);
   }, [currentCycleSales]);
 
-  // 2. All-time cash sales (direct cash sales)
+  // 2. All-time cash sales (direct cash sales + partial checkout down-payments on debt sales)
   const allTimeCashSalesTotal = useLiveQuery(async () => {
     const isNeeded = activeTab === 'notes' || showSettleModal;
     if (!isNeeded) return 0;
     const allSales = await db.sales.toArray();
-    return allSales.filter(s => s.payment_type === 'cash').reduce((sum, s) => sum + s.total_amount, 0);
+    return allSales.reduce((sum, s) => {
+      if (s.payment_type === 'cash') return sum + s.total_amount;
+      return sum + Math.min(s.total_amount, Math.max(0, Number(s.paid_amount || 0)));
+    }, 0);
   }, [activeTab, showSettleModal]) || 0;
 
   // 3. Customer debt payments (تسديدات الديون)
@@ -2827,6 +2856,118 @@ export default function App() {
     setShowCustomerDetails(customer);
   };
 
+  /**
+   * Allocates a customer's debt repayment FIFO across their unpaid credit sales
+   * and releases the proportional pending supplier cost into supplier.balance.
+   */
+  const releaseSupplierDuesOnCustomerDebtReduction = async (
+    customerId: number,
+    prevCustomerBalance: number,
+    reductionAmount: number
+  ) => {
+    const debtPaidAmount = Math.max(0, Math.min(Math.max(0, prevCustomerBalance), Math.max(0, reductionAmount)));
+    if (debtPaidAmount <= 0) return;
+
+    const custSales = await db.sales.where('customer_id').equals(customerId).toArray();
+    const debtSales = custSales.filter(s => s.payment_type === 'debt' || (s.collected_amount !== undefined && s.collected_amount < s.total_amount));
+    if (debtSales.length === 0) return;
+
+    // Sort oldest-first for FIFO debt settlement
+    const oldestFirst = [...debtSales].sort((a, b) => {
+      const timeDiff = new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+      if (timeDiff !== 0) return timeDiff;
+      return (a.id || 0) - (b.id || 0);
+    });
+
+    // Determine exact prior collected amount on any untracked legacy debt sales
+    let trackedUncollected = 0;
+    let untrackedMaxUnpaid = 0;
+    oldestFirst.forEach(s => {
+      const total = Math.max(0, Number(s.total_amount || 0));
+      if (s.collected_amount !== undefined) {
+        trackedUncollected += Math.max(0, total - Math.min(total, Math.max(0, Number(s.collected_amount || 0))));
+      } else if (s.payment_type === 'debt') {
+        const paidAtCheckout = Math.min(total, Math.max(0, Number(s.paid_amount || 0)));
+        untrackedMaxUnpaid += Math.max(0, total - paidAtCheckout);
+      }
+    });
+
+    const unpaidUntrackedBefore = Math.max(0, Math.max(0, prevCustomerBalance) - trackedUncollected);
+    let alreadySettledUntrackedPool = Math.max(0, untrackedMaxUnpaid - unpaidUntrackedBefore);
+
+    const beforeCollectedMap = new Map<number, number>();
+    for (const s of oldestFirst) {
+      if (s.id === undefined) continue;
+      const total = Math.max(0, Number(s.total_amount || 0));
+      if (s.collected_amount !== undefined) {
+        beforeCollectedMap.set(s.id, Math.min(total, Math.max(0, Number(s.collected_amount || 0))));
+      } else {
+        const paidAtCheckout = Math.min(total, Math.max(0, Number(s.paid_amount || 0)));
+        const maxUnpaid = Math.max(0, total - paidAtCheckout);
+        const priorSettled = Math.min(maxUnpaid, alreadySettledUntrackedPool);
+        alreadySettledUntrackedPool -= priorSettled;
+        const baselineCollected = Math.min(total, paidAtCheckout + priorSettled);
+        beforeCollectedMap.set(s.id, baselineCollected);
+        // Normalize fully-settled legacy invoices so future scans stay clean
+        if (baselineCollected >= total - 0.001) {
+          await db.sales.update(s.id, {
+            cash_basis_tracking: true,
+            collected_amount: Number(total.toFixed(2))
+          });
+        }
+      }
+    }
+
+    let remainingToAllocate = debtPaidAmount;
+    const supplierDeltaMap = new Map<number, number>();
+
+    for (const s of oldestFirst) {
+      if (remainingToAllocate <= 0.0001) break;
+      if (s.id === undefined) continue;
+      const total = Math.max(0, Number(s.total_amount || 0));
+      const beforeCollected = beforeCollectedMap.get(s.id) ?? 0;
+      const uncollected = Math.max(0, total - beforeCollected);
+      if (uncollected <= 0.0001) continue;
+
+      const allocatedNow = Math.min(remainingToAllocate, uncollected);
+      remainingToAllocate -= allocatedNow;
+
+      const newCollected = Math.min(total, beforeCollected + allocatedNow);
+      const prevRatio = total > 0 ? Math.min(1, beforeCollected / total) : 0;
+      const newRatio = total > 0 ? Math.min(1, newCollected / total) : 1;
+      const deltaRatio = Math.max(0, newRatio - prevRatio);
+
+      if (deltaRatio > 0) {
+        const items = await db.saleItems.where('sale_id').equals(s.id).toArray();
+        for (const item of items) {
+          const prod = await db.products.get(item.product_id);
+          if (prod?.supplier_id) {
+            const deltaCost = (prod.cost_price || 0) * item.quantity * deltaRatio;
+            if (deltaCost > 0) {
+              supplierDeltaMap.set(prod.supplier_id, (supplierDeltaMap.get(prod.supplier_id) || 0) + deltaCost);
+            }
+          }
+        }
+      }
+
+      await db.sales.update(s.id, {
+        cash_basis_tracking: true,
+        collected_amount: Number(newCollected.toFixed(2))
+      });
+    }
+
+    for (const [suppId, deltaCost] of supplierDeltaMap.entries()) {
+      if (deltaCost > 0) {
+        const supp = await db.suppliers.get(suppId);
+        if (supp) {
+          await db.suppliers.update(suppId, {
+            balance: Number(((supp.balance || 0) + deltaCost).toFixed(2))
+          });
+        }
+      }
+    }
+  };
+
   const handlePayment = async (data: any, resetForm: () => void) => {
     const { paymentAmount, paymentNotes, showReceiptVoucher } = data;
     if (!showPaymentModal || !showPaymentModal.id) return;
@@ -2838,7 +2979,7 @@ export default function App() {
       let newBal = 0;
 
       // Update local DB
-      await db.transaction('rw', [db.customers, db.debts], async () => {
+      await db.transaction('rw', [db.customers, db.debts, db.sales, db.saleItems, db.products, db.suppliers], async () => {
         const targetCustomer = await db.customers.get(showPaymentModal.id!);
         if (targetCustomer) {
           prevBal = Number(targetCustomer.balance || 0);
@@ -2847,6 +2988,9 @@ export default function App() {
             balance: newBal
           });
           updatedCustomer = { ...targetCustomer, balance: newBal };
+
+          // Transfer corresponding pending supplier dues into current supplier balance
+          await releaseSupplierDuesOnCustomerDebtReduction(showPaymentModal.id!, prevBal, amount);
         }
 
         const paymentAutoNote = `[سداد وتخفيض مديونية]: الدين السابق: ${formatPrice(prevBal)} | المبلغ المسدد: ${formatPrice(amount)} -> إجمالي الدين المتبقي الجديد: ${formatPrice(newBal)}`;
@@ -2923,7 +3067,7 @@ export default function App() {
       let newBal = 0;
 
       // Update local DB
-      await db.transaction('rw', [db.customers, db.debts], async () => {
+      await db.transaction('rw', [db.customers, db.debts, db.sales, db.saleItems, db.products, db.suppliers], async () => {
         const targetCustomer = await db.customers.get(showCustomerAdjustmentModal.id!);
         if (targetCustomer) {
           prevBal = Number(targetCustomer.balance || 0);
@@ -2937,6 +3081,10 @@ export default function App() {
             balance: newBal
           });
           updatedCustomer = { ...targetCustomer, balance: newBal };
+
+          if (adjustmentType === 'add_credit' && amount > 0) {
+            await releaseSupplierDuesOnCustomerDebtReduction(showCustomerAdjustmentModal.id!, prevBal, amount);
+          }
         }
 
         const adjActionStr = adjustmentType === 'add_debt'
@@ -3493,6 +3641,11 @@ export default function App() {
             const sale = await db.sales.get(id);
             if (!sale) return;
 
+            // Determine the fraction of supplier cost that was actually released to supplier.balance for this sale
+            const releasedRatio = sale.cash_basis_tracking
+              ? (sale.total_amount > 0 ? Math.min(1, Math.max(0, (sale.collected_amount ?? 0) / sale.total_amount)) : (sale.payment_type === 'cash' ? 1 : 0))
+              : (sale.payment_type === 'cash' ? 1 : (sale.collected_amount && sale.total_amount > 0 ? Math.min(1, sale.collected_amount / sale.total_amount) : 0));
+
             const items = await db.saleItems.where('sale_id').equals(id).toArray();
             for (const item of items) {
               const product = await db.products.get(item.product_id);
@@ -3507,27 +3660,34 @@ export default function App() {
                   created_at: new Date().toISOString()
                 });
 
-                // Reverse supplier balance change if product has a supplier
-                if (product.supplier_id) {
+                // Reverse only the supplier balance portion that was previously credited
+                if (product.supplier_id && releasedRatio > 0) {
                   const supplier = await db.suppliers.get(product.supplier_id);
                   if (supplier) {
+                    const reverseAmount = product.cost_price * item.quantity * releasedRatio;
                     await db.suppliers.update(product.supplier_id, {
-                      balance: supplier.balance - (product.cost_price * item.quantity)
+                      balance: Number((supplier.balance - reverseAmount).toFixed(2))
                     });
                   }
                 }
               }
             }
 
-            if (sale.payment_type === 'debt' && sale.customer_id) {
+            const saleDebts = await db.debts.where('sale_id').equals(id).toArray();
+            if (sale.customer_id) {
               const customer = await db.customers.get(sale.customer_id);
               if (customer) {
-                await db.customers.update(sale.customer_id, {
-                  balance: customer.balance - sale.total_amount
-                });
-                await db.debts.where('sale_id').equals(id).delete();
+                const debtDelta = saleDebts.length > 0
+                  ? saleDebts.reduce((sum, d) => sum + (d.type === 'purchase' ? d.amount : -d.amount), 0)
+                  : (sale.payment_type === 'debt' ? (sale.remaining_amount ?? sale.total_amount) : 0);
+                if (debtDelta !== 0) {
+                  await db.customers.update(sale.customer_id, {
+                    balance: Number((customer.balance - debtDelta).toFixed(2))
+                  });
+                }
               }
             }
+            await db.debts.where('sale_id').equals(id).delete();
 
             await db.saleItems.where('sale_id').equals(id).delete();
             await db.sales.delete(id);
@@ -4898,6 +5058,14 @@ export default function App() {
 
     const fullNotes = saleNotes.trim() ? `${autoExplanation} | ملاحظة: ${saleNotes.trim()}` : autoExplanation;
 
+    const effectiveAdvanceCredit = previousBalance < 0 ? Math.min(total, Math.max(0, Math.abs(previousBalance))) : 0;
+    const collectedAtCheckout = paymentType === 'cash'
+      ? total
+      : Math.min(total, Math.max(0, actualPaid + effectiveAdvanceCredit));
+    const supplierReleaseRatio = total > 0
+      ? Math.min(1, Math.max(0, collectedAtCheckout / total))
+      : (paymentType === 'cash' ? 1 : 0);
+
     try {
       await db.transaction('rw', [db.sales, db.saleItems, db.products, db.inventoryLogs, db.customers, db.debts, db.suppliers], async () => {
         const saleId = await db.sales.add({
@@ -4910,7 +5078,9 @@ export default function App() {
           previous_balance: previousBalance,
           new_balance: newCustomerBalance,
           created_at: new Date().toISOString(),
-          notes: fullNotes
+          notes: fullNotes,
+          cash_basis_tracking: true,
+          collected_amount: Number(collectedAtCheckout.toFixed(2))
         });
 
         for (const item of cart) {
@@ -4933,12 +5103,13 @@ export default function App() {
               created_at: new Date().toISOString()
             });
 
-            // Update supplier balance if product has a supplier
-            if (product.supplier_id) {
+            // Release supplier cost proportionally to collected cash (100% for cash sales, 0% for unpaid credit sales until repaid)
+            if (product.supplier_id && supplierReleaseRatio > 0) {
               const supplier = await db.suppliers.get(product.supplier_id);
               if (supplier) {
+                const releasedCost = product.cost_price * item.quantity * supplierReleaseRatio;
                 await db.suppliers.update(product.supplier_id, {
-                  balance: supplier.balance + (product.cost_price * item.quantity)
+                  balance: Number(((supplier.balance || 0) + releasedCost).toFixed(2))
                 });
               }
             }
@@ -6785,7 +6956,9 @@ export default function App() {
               summary={summary}
               suppliers={suppliers}
               products={products}
+              sales={allSalesForDetails}
               saleItems={allSaleItemsForDetails}
+              customers={customers}
               enrichedSupplierPayments={enrichedSupplierPayments}
               formatPrice={formatPrice}
               formatDateWithDay={formatDateWithDay}

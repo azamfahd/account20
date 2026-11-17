@@ -56,6 +56,8 @@ export interface Sale {
   notes?: string;
   previous_balance?: number;
   new_balance?: number;
+  cash_basis_tracking?: boolean;
+  collected_amount?: number;
 }
 
 export interface SaleItem {

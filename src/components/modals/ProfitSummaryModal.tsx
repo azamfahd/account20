@@ -7,7 +7,8 @@ export interface ProfitSummaryModalProps {
   showProfitSummaryModal: boolean;
   setShowProfitSummaryModal: (show: boolean) => void;
   summary: {
-    totalProfit?: number; // Gross margin from sales
+    totalProfit?: number; // Realized gross margin from cash + paid debt sales
+    pendingProfit?: number; // Pending margin from unpaid credit sales
     expectedRemainingProfit?: number;
     expensesTotal?: number; // Total operating expenses
     totalSalesRevenue?: number;
@@ -26,6 +27,7 @@ export const ProfitSummaryModal: React.FC<ProfitSummaryModalProps> = ({
   if (!showProfitSummaryModal) return null;
 
   const grossProfit = summary.totalProfit ?? 0;
+  const pendingProfit = summary.pendingProfit ?? 0;
   const expenses = summary.expensesTotal ?? 0;
   const netProfit = grossProfit - expenses;
   const remainingExpected = summary.expectedRemainingProfit ?? 0;
@@ -89,11 +91,15 @@ export const ProfitSummaryModal: React.FC<ProfitSummaryModalProps> = ({
             {/* 1. Gross Profit */}
             <div className="bg-slate-800/80 border border-slate-700 p-4 rounded-2xl space-y-1 text-right">
               <div className="flex items-center justify-between">
-                <p className="text-[10px] text-emerald-400 font-extrabold">مجمل ربح المبيعات</p>
+                <p className="text-[10px] text-emerald-400 font-extrabold">مجمل الربح المحقق (نقدي/مسدد)</p>
                 <ArrowUpRight className="w-3.5 h-3.5 text-emerald-400" />
               </div>
-              <p className="text-lg font-black font-mono text-emerald-300">{formatPrice(grossProfit)}</p>
-              <p className="text-[9px] text-slate-400 font-medium">سعر البيع ناقص سعر التكلفة</p>
+              <p className="text-lg font-black font-mono tabular-nums text-emerald-300">{formatPrice(grossProfit)}</p>
+              <p className="text-[9px] text-slate-400 font-medium">
+                {pendingProfit > 0
+                  ? `أرباح معلقة بالآجل: ${formatPrice(pendingProfit)}`
+                  : 'سعر البيع ناقص التكلفة للمبيعات المسددة'}
+              </p>
             </div>
 
             {/* 2. Operational Expenses */}

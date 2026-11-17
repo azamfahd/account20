@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { motion } from 'motion/react';
 import { Button } from '../ui/Button';
-import { Briefcase, X, FileText, Building2, Layers, CheckCircle2, ChevronLeft, ArrowUpRight } from 'lucide-react';
-import { Supplier, Product, SaleItem } from '../../types';
+import { Briefcase, X, Building2, ChevronLeft, ArrowUpRight } from 'lucide-react';
+import { Supplier, Product, Sale, SaleItem, Customer } from '../../types';
+import { calculateSupplierAndCashBasisMetrics } from '../../utils/accounting';
 
 export interface SupplierSummaryModalProps {
   showSupplierSummaryModal: boolean;
@@ -12,10 +13,14 @@ export interface SupplierSummaryModalProps {
     totalSupplierPayments?: number;
     totalCostOfSales?: number;
     totalInventoryCost?: number;
+    pendingSupplierDues?: number;
+    totalAllSupplierDues?: number;
   };
   suppliers: Supplier[];
   products?: Product[];
+  sales?: Sale[];
   saleItems?: SaleItem[];
+  customers?: Customer[];
   enrichedSupplierPayments: any[];
   formatPrice: (amount: number) => string;
   formatDateWithDay: (dateStr: string) => string;
@@ -26,10 +31,11 @@ export interface SupplierSummaryModalProps {
 export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
   showSupplierSummaryModal,
   setShowSupplierSummaryModal,
-  summary,
   suppliers,
   products = [],
+  sales = [],
   saleItems = [],
+  customers = [],
   enrichedSupplierPayments,
   formatPrice,
   formatDateWithDay,
@@ -37,82 +43,66 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
   setSelectedSupplierPayment,
 }) => {
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>('all');
-  const [searchFilter, setSearchFilter] = useState('');
+  const [searchFilter] = useState('');
 
-  // Build product lookup map
-  const productMap = useMemo(() => {
-    return new Map(products.map(p => [p.id, p]));
-  }, [products]);
-
-  // Compute stats per supplier
-  const { supplierList, metrics, totalSuppliersDebt, totalSuppliersPaid } = useMemo(() => {
-    let totalSuppliersDebt = 0;
-    let totalSuppliersPaid = 0;
+  // Compute exact cash-basis (current) vs pending credit-sale supplier dues
+  const { supplierList, metrics } = useMemo(() => {
+    const computed = calculateSupplierAndCashBasisMetrics(
+      suppliers,
+      products,
+      sales,
+      saleItems,
+      enrichedSupplierPayments,
+      customers
+    );
 
     const list = suppliers.map(s => {
-      const sDebt = s.balance || 0;
-      totalSuppliersDebt += sDebt;
+      const m = s.id !== undefined ? computed.bySupplierId.get(s.id) : undefined;
+      const payments = enrichedSupplierPayments
+        .filter(p => p.supplier_id === s.id)
+        .slice()
+        .sort((a, b) => new Date(b.payment_date).getTime() - new Date(a.payment_date).getTime());
 
-      const payments = enrichedSupplierPayments.filter(p => p.supplier_id === s.id);
-      const totalPaid = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
-
-      const supplierProducts = products.filter(p => p.supplier_id === s.id);
-      const supplierProductIds = new Set(supplierProducts.map(p => p.id));
-      
-      const supplierStock = supplierProducts.reduce((acc, p) => acc + (p.stock_quantity || 0), 0);
-      const supplierInventoryCostValue = supplierProducts.reduce((acc, p) => acc + ((p.stock_quantity || 0) * (p.cost_price || 0)), 0);
-      
-      let totalSoldQuantity = 0;
-      let totalSoldCostValue = 0;
-      saleItems.forEach(item => {
-        if (supplierProductIds.has(item.product_id)) {
-          totalSoldQuantity += item.quantity;
-          const prod = productMap.get(item.product_id);
-          const unitCost = prod ? prod.cost_price : (item.price_at_sale * 0.75);
-          totalSoldCostValue += unitCost * item.quantity;
-        }
-      });
-
-      const totalInventoryAndSoldCost = supplierInventoryCostValue + totalSoldCostValue;
-      const totalRequiredBeforeSettlement = sDebt + totalPaid;
+      const currentBalance = m ? m.currentBalance : (s.balance || 0);
+      const pendingDebtDues = m ? m.pendingDebtDues : 0;
+      const totalAllDues = m ? m.totalAllDues : currentBalance;
 
       return {
         ...s,
-        balance: sDebt,
-        totalPaid,
-        totalRequiredBeforeSettlement,
-        productsCount: supplierProducts.length,
-        inventoryStock: supplierStock,
-        inventoryCostValue: supplierInventoryCostValue,
-        totalSoldQuantity,
-        totalSoldCostValue,
-        totalInventoryAndSoldCost,
-        payments: payments.slice().sort((a, b) => new Date(b.payment_date).getTime() - new Date(a.payment_date).getTime()),
+        balance: currentBalance,
+        pendingDebtDues,
+        totalAllDues,
+        totalPaid: m ? m.totalPaid : 0,
+        totalRequiredBeforeSettlement: m ? m.totalRequiredBeforeSettlement : currentBalance,
+        totalRequiredBeforeSettlementAll: m ? m.totalRequiredBeforeSettlementAll : totalAllDues,
+        productsCount: m ? m.productsCount : 0,
+        inventoryStock: m ? m.inventoryStock : 0,
+        inventoryCostValue: m ? m.inventoryCostValue : 0,
+        totalSoldQuantity: m ? m.totalSoldQuantity : 0,
+        totalSoldCostValue: m ? m.totalSoldCostValue : 0,
+        settledSoldCostValue: m ? m.settledSoldCostValue : 0,
+        totalInventoryAndSoldCost: m ? m.totalInventoryAndSoldCost : 0,
+        payments,
       };
-    }).sort((a, b) => (b.balance || 0) - (a.balance || 0));
+    }).sort((a, b) => (b.totalAllDues || 0) - (a.totalAllDues || 0));
 
-    // Global totals
-    enrichedSupplierPayments.forEach(p => {
-      totalSuppliersPaid += (p.amount || 0);
-    });
-
-    const totalInventoryCostAll = list.reduce((acc, s) => acc + s.inventoryCostValue, 0);
-    const totalSoldCostAll = list.reduce((acc, s) => acc + s.totalSoldCostValue, 0);
-    const totalInventoryAndSoldCostAll = totalInventoryCostAll + totalSoldCostAll;
-    const totalRequiredBeforeSettlementAll = totalSuppliersDebt + totalSuppliersPaid;
-
-    const selectedObj = selectedSupplierId === 'all' 
-      ? null 
+    const selectedObj = selectedSupplierId === 'all'
+      ? null
       : list.find(s => String(s.id) === String(selectedSupplierId)) || null;
 
+    const g = computed.global;
     const activeMetrics = selectedObj ? {
       name: selectedObj.name,
       isSpecific: true,
       currentBalance: selectedObj.balance,
+      pendingDebtDues: selectedObj.pendingDebtDues,
+      totalAllDues: selectedObj.totalAllDues,
       totalPaid: selectedObj.totalPaid,
       totalRequiredBeforeSettlement: selectedObj.totalRequiredBeforeSettlement,
+      totalRequiredBeforeSettlementAll: selectedObj.totalRequiredBeforeSettlementAll,
       inventoryCostValue: selectedObj.inventoryCostValue,
       soldCostValue: selectedObj.totalSoldCostValue,
+      settledSoldCostValue: selectedObj.settledSoldCostValue,
       totalInventoryAndSoldCost: selectedObj.totalInventoryAndSoldCost,
       productsCount: selectedObj.productsCount,
       paymentsCount: selectedObj.payments.length,
@@ -120,13 +110,17 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
     } : {
       name: 'جميع الموردين',
       isSpecific: false,
-      currentBalance: totalSuppliersDebt,
-      totalPaid: totalSuppliersPaid,
-      totalRequiredBeforeSettlement: totalRequiredBeforeSettlementAll,
-      inventoryCostValue: totalInventoryCostAll,
-      soldCostValue: totalSoldCostAll,
-      totalInventoryAndSoldCost: totalInventoryAndSoldCostAll,
-      productsCount: products.filter(p => p.supplier_id != null).length,
+      currentBalance: g.currentBalance,
+      pendingDebtDues: g.pendingDebtDues,
+      totalAllDues: g.totalAllDues,
+      totalPaid: g.totalPaid,
+      totalRequiredBeforeSettlement: g.totalRequiredBeforeSettlement,
+      totalRequiredBeforeSettlementAll: g.totalRequiredBeforeSettlementAll,
+      inventoryCostValue: g.inventoryCostValue,
+      soldCostValue: g.soldCostValue,
+      settledSoldCostValue: g.settledSoldCostValue,
+      totalInventoryAndSoldCost: g.totalInventoryAndSoldCost,
+      productsCount: g.productsCount,
       paymentsCount: enrichedSupplierPayments.length,
       rawSupplier: null
     };
@@ -134,28 +128,24 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
     return {
       supplierList: list,
       metrics: activeMetrics,
-      totalSuppliersDebt,
-      totalSuppliersPaid
     };
-  }, [suppliers, products, saleItems, enrichedSupplierPayments, productMap, selectedSupplierId]);
+  }, [suppliers, products, sales, saleItems, customers, enrichedSupplierPayments, selectedSupplierId]);
 
   if (!showSupplierSummaryModal) return null;
 
-  // Filtered payments list
   const displayedPayments = selectedSupplierId === 'all'
     ? enrichedSupplierPayments
     : enrichedSupplierPayments.filter(p => String(p.supplier_id) === String(selectedSupplierId));
 
-  // Filtered suppliers list
-  const displayedSuppliers = supplierList.filter(s => 
-    s.name.toLowerCase().includes(searchFilter.toLowerCase()) || 
+  const displayedSuppliers = supplierList.filter(s =>
+    s.name.toLowerCase().includes(searchFilter.toLowerCase()) ||
     (s.phone && s.phone.includes(searchFilter))
   );
 
   return (
     <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-2 sm:p-4 backdrop-blur-xs">
-      <motion.div 
-        initial={{ scale: 0.96, opacity: 0 }} 
+      <motion.div
+        initial={{ scale: 0.96, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         className="bg-slate-50 w-full max-w-3xl lg:max-w-4xl rounded-2xl sm:rounded-3xl p-3.5 sm:p-5 space-y-3 shadow-2xl relative text-right max-h-[92vh] overflow-y-auto border border-white"
         dir="rtl"
@@ -176,13 +166,13 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 font-medium mt-0.5">
-                كشف تحليلي للمستحقات، الدفعات المسلمة للتجار، وقيمة البضائع بالمخزن والمباعة
+                كشف تحليلي للمستحقات الحالية والمعلقة، الدفعات المسلمة للتجار، وقيمة البضائع
               </p>
             </div>
           </div>
-          <button 
+          <button
             type="button"
-            onClick={() => setShowSupplierSummaryModal(false)} 
+            onClick={() => setShowSupplierSummaryModal(false)}
             className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-xl transition-colors cursor-pointer"
             title="إغلاق النافذة"
           >
@@ -207,7 +197,7 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
                 <option value="all">🌐 جميع الموردين ({suppliers.length})</option>
                 {supplierList.map((sup, idx) => (
                   <option key={`sup-modal-opt-${sup.id ?? 'noid'}-${idx}`} value={String(sup.id)}>
-                    {sup.name} {sup.balance > 0 ? `(مستحق: ${formatPrice(sup.balance)})` : '(خالص)'}
+                    {sup.name} {sup.totalAllDues > 0 ? `(حالي: ${formatPrice(sup.balance)}${sup.pendingDebtDues > 0 ? ` · معلق: ${formatPrice(sup.pendingDebtDues)}` : ''})` : '(خالص)'}
                   </option>
                 ))}
               </select>
@@ -256,11 +246,11 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
                     }`}
                   >
                     <span>{sup.name}</span>
-                    {sup.balance > 0 && (
+                    {sup.totalAllDues > 0 && (
                       <span className={`text-[9px] px-1 py-0.2 rounded font-mono font-bold ${
                         isSelected ? 'bg-amber-800 text-white' : 'bg-amber-200 text-amber-900'
                       }`}>
-                        {formatPrice(sup.balance)}
+                        {formatPrice(sup.totalAllDues)}
                       </span>
                     )}
                   </button>
@@ -270,7 +260,7 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
           )}
         </div>
 
-        {/* --- 4 Financial Metrics Cards (Compact & Neat) --- */}
+        {/* --- 4 Financial Metrics Cards (Compact & Original Size) --- */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-2.5">
           {/* Card 1: المطلوب قبل السداد */}
           <div className="bg-gradient-to-br from-indigo-50/90 to-indigo-100/50 border border-indigo-200/90 p-2.5 sm:p-3 rounded-xl flex flex-col justify-between shadow-2xs">
@@ -284,11 +274,18 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
                 {formatPrice(metrics.totalRequiredBeforeSettlement)}
               </p>
             </div>
-            <p className="text-[9px] text-indigo-700/90 font-medium leading-tight truncate">
-              {metrics.isSpecific 
-                ? `المستحق لـ (${metrics.name}) قبل السداد`
-                : 'المستحقات الكليّة لجميع التجار قبل السداد'}
-            </p>
+            {metrics.pendingDebtDues > 0 ? (
+              <div className="pt-1 mt-0.5 border-t border-indigo-200/70 flex items-center justify-between text-[9.5px] font-bold">
+                <span className="text-indigo-800/90 shrink-0">شامل المعلق:</span>
+                <span className="font-mono text-indigo-950 font-black">{formatPrice(metrics.totalRequiredBeforeSettlementAll)}</span>
+              </div>
+            ) : (
+              <p className="text-[9px] text-indigo-700/90 font-medium leading-tight truncate">
+                {metrics.isSpecific
+                  ? `المستحق لـ (${metrics.name}) قبل السداد`
+                  : 'المستحقات الكليّة لجميع التجار قبل السداد'}
+              </p>
+            )}
           </div>
 
           {/* Card 2: المبالغ المسلمة */}
@@ -310,23 +307,28 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
             </p>
           </div>
 
-          {/* Card 3: المطلوب حالياً */}
+          {/* Card 3: المطلوب حالياً (الحالية + المعلقة + الإجمالي) */}
           <div className="bg-gradient-to-br from-amber-50/90 to-amber-100/60 border border-amber-200/90 p-2.5 sm:p-3 rounded-xl flex flex-col justify-between shadow-2xs">
             <div>
               <div className="flex items-center justify-between mb-0.5">
                 <span className="text-[9.5px] bg-amber-100 text-amber-900 px-1.5 py-0.2 rounded-full font-bold">المطلوب حالياً</span>
                 <span className="text-[8.5px] text-amber-700 font-mono font-bold">المتبقي</span>
               </div>
-              <p className="text-[11px] text-amber-900/80 font-bold">المستحق الحالي المتبقي</p>
+              <p className="text-[11px] text-amber-900/80 font-bold">إجمالي كل المستحقات</p>
               <p className="text-sm sm:text-base font-black font-mono text-amber-950 my-0.5">
-                {formatPrice(metrics.currentBalance)}
+                {formatPrice(metrics.totalAllDues)}
               </p>
             </div>
-            <p className="text-[9px] text-amber-800 font-medium leading-tight truncate">
-              {metrics.isSpecific
-                ? (metrics.currentBalance > 0 ? 'المستحق المتبقي لهذا المورد' : 'الحساب خالص بالكامل')
-                : 'صافي الديون المعلقة للتجار'}
-            </p>
+            <div className="pt-1 mt-0.5 border-t border-amber-200/70 space-y-0.5">
+              <div className="flex items-center justify-between text-[10px] sm:text-[10.5px] font-bold">
+                <span className="text-emerald-900 shrink-0">الحالي:</span>
+                <span className="font-mono text-emerald-950 font-black">{formatPrice(metrics.currentBalance)}</span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] sm:text-[10.5px] font-bold">
+                <span className="text-rose-800 shrink-0">المعلقة:</span>
+                <span className="font-mono text-rose-900 font-black">{formatPrice(metrics.pendingDebtDues)}</span>
+              </div>
+            </div>
           </div>
 
           {/* Card 4: مستحق البضائع الكلي (المخزون + المباع بالتكلفة) */}
@@ -347,9 +349,15 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
                 <span className="font-mono text-purple-950 font-black">{formatPrice(metrics.inventoryCostValue)}</span>
               </div>
               <div className="flex items-center justify-between text-[10px] sm:text-[10.5px] font-bold">
-                <span className="text-purple-800/90 shrink-0">المباع:</span>
-                <span className="font-mono text-purple-950 font-black">{formatPrice(metrics.soldCostValue)}</span>
+                <span className="text-purple-800/90 shrink-0">مباع نقد/مسدد:</span>
+                <span className="font-mono text-purple-950 font-black">{formatPrice(metrics.settledSoldCostValue)}</span>
               </div>
+              {metrics.pendingDebtDues > 0 && (
+                <div className="flex items-center justify-between text-[9.5px] font-bold">
+                  <span className="text-rose-700 shrink-0">مباع آجل (معلق):</span>
+                  <span className="font-mono text-rose-800 font-black">{formatPrice(metrics.pendingDebtDues)}</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -367,14 +375,14 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
                   {displayedSuppliers.length} مورد
                 </span>
               </div>
-              
+
               <div className="space-y-1.5 max-h-[160px] sm:max-h-[180px] overflow-y-auto pr-1 custom-scrollbar">
                 {displayedSuppliers.length > 0 ? (
                   displayedSuppliers.map((s, idx) => {
                     const isSelected = selectedSupplierId === String(s.id);
                     return (
-                      <div 
-                        key={`supp-sum-${s.id ?? 'noid'}-${idx}`} 
+                      <div
+                        key={`supp-sum-${s.id ?? 'noid'}-${idx}`}
                         onClick={() => setSelectedSupplierId(String(s.id))}
                         className={`p-2 rounded-lg border flex justify-between items-center cursor-pointer transition-all active:scale-[0.99] ${
                           isSelected
@@ -388,15 +396,19 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
                             <span className="truncate">{s.name}</span>
                             {isSelected && <span className="text-[8.5px] bg-amber-600 text-white px-1 rounded font-bold shrink-0">محدد</span>}
                           </span>
-                          <span className="text-[9px] text-slate-400 block pr-2.5 truncate">{s.phone || 'بدون هاتف'}</span>
+                          <span className="text-[9px] text-slate-400 block pr-2.5 truncate font-mono">
+                            {s.pendingDebtDues > 0
+                              ? `حالي: ${formatPrice(s.balance)} · معلق: ${formatPrice(s.pendingDebtDues)}`
+                              : (s.phone || 'بدون هاتف')}
+                          </span>
                         </div>
                         <div className="text-left flex items-center gap-1.5 shrink-0">
                           <span className={`font-bold font-mono text-[11px] px-2 py-0.5 rounded border ${
-                            s.balance > 0 
-                              ? 'bg-amber-100/80 text-amber-900 border-amber-200' 
+                            s.totalAllDues > 0
+                              ? 'bg-amber-100/80 text-amber-900 border-amber-200'
                               : 'bg-emerald-50 text-emerald-800 border-emerald-100'
                           }`}>
-                            {formatPrice(s.balance)}
+                            {formatPrice(s.totalAllDues)}
                           </span>
                           <button
                             type="button"
@@ -419,7 +431,7 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
                 )}
               </div>
             </div>
-            
+
             <div className="text-[9px] text-slate-400 font-medium pt-1 border-t border-slate-100 text-center">
               * إضغط على التاجر لتصفية البطاقات أعلاه وعرض حسابه الخاص.
             </div>
@@ -440,8 +452,8 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
               <div className="space-y-1.5 max-h-[160px] sm:max-h-[180px] overflow-y-auto pr-1 custom-scrollbar">
                 {displayedPayments.length > 0 ? (
                   displayedPayments.map((p, idx) => (
-                    <div 
-                      key={`supp-pay-item-${p.id ?? 'pmt'}-${idx}`} 
+                    <div
+                      key={`supp-pay-item-${p.id ?? 'pmt'}-${idx}`}
                       onClick={() => setSelectedSupplierPayment(p)}
                       className="bg-slate-50/80 p-2 rounded-lg border border-slate-100 flex justify-between items-center hover:bg-emerald-50/50 cursor-pointer transition-all active:scale-[0.99] gap-2"
                     >
@@ -481,8 +493,8 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
 
         {/* Footer (Compact Close Button) */}
         <div className="pt-2 border-t border-slate-200/80">
-          <Button 
-            className="w-full py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-black bg-slate-800 hover:bg-slate-900 text-white shadow-xs active:scale-[0.99] transition-all cursor-pointer" 
+          <Button
+            className="w-full py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-black bg-slate-800 hover:bg-slate-900 text-white shadow-xs active:scale-[0.99] transition-all cursor-pointer"
             onClick={() => setShowSupplierSummaryModal(false)}
           >
             إغلاق النافذة

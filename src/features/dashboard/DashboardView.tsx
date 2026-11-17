@@ -37,6 +37,12 @@ interface DashboardViewProps {
     totalDebts: number;
     lowStock: number;
     expiringStock: number;
+    pendingSupplierDues?: number;
+    totalAllSupplierDues?: number;
+    supplierSettledSoldCost?: number;
+    totalSupplierSoldCost?: number;
+    pendingProfit?: number;
+    grossProfitAllSales?: number;
     totalExpenses?: number;
     netProfit?: number;
   };
@@ -446,6 +452,11 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
           </div>
           <p className="text-[10px] sm:text-xs font-black text-slate-300 mt-0.5">صافي الأرباح المحققة</p>
           <p className="text-lg sm:text-xl font-black text-white tracking-tight mt-0.5">{renderStatValue(summary.totalProfit)}</p>
+          {(summary.pendingProfit ?? 0) > 0 && (
+            <p className="text-[9px] font-bold text-amber-300/90 mt-0.5 truncate">
+              أرباح معلقة بالآجل: {renderStatValue(summary.pendingProfit ?? 0)}
+            </p>
+          )}
         </motion.div>
 
         <motion.div 
@@ -464,12 +475,12 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
             <span className="text-[9px] sm:text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-200 px-1.5 py-0.5 rounded-md">تفاصيل كاملة 🛈</span>
           </div>
           <p className="text-[10px] sm:text-xs font-black text-slate-600 mt-0.5">تكلفة المخزون</p>
-          <p className="text-lg sm:text-xl font-black text-slate-900 tracking-tight mt-0.5">{renderStatValue(summary.totalInventoryCost)}</p>
+          <p className="text-lg sm:text-xl font-black font-mono tabular-nums text-slate-900 tracking-tight mt-0.5">{renderStatValue(summary.totalInventoryCost)}</p>
         </motion.div>
 
         <motion.div 
           whileHover={{ scale: 1.015 }} 
-          className="p-2.5 sm:p-3 rounded-2xl bg-amber-50/90 border border-amber-200 shadow-2xs cursor-pointer hover:bg-amber-100/70 hover:border-amber-400 transition-all"
+          className="p-2.5 sm:p-3 rounded-2xl bg-gradient-to-br from-amber-50/90 to-amber-100/60 border border-amber-200/90 shadow-2xs cursor-pointer hover:bg-amber-100/80 hover:border-amber-400 transition-all flex flex-col justify-between"
           onClick={() => {
             if (isStatsHidden) {
               handleUnlockSection('stats', 'hide_dashboard_stats', '🔑 إظهار الإحصائيات والأرقام المالية', () => setShowSupplierSummaryModal(true));
@@ -478,12 +489,29 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
             }
           }}
         >
-          <div className="flex justify-between items-start mb-0.5">
-            <Briefcase className="w-4 h-4 text-amber-700" />
-            <span className="text-[9px] sm:text-[10px] font-black bg-amber-200/80 text-amber-900 border border-amber-300 px-1.5 py-0.5 rounded-md">تسوية 🛈</span>
+          <div>
+            <div className="flex items-center justify-between gap-1 mb-0.5">
+              <span className="text-[9px] sm:text-[10px] bg-amber-200/70 text-amber-950 px-1.5 py-0.5 rounded-md font-black inline-flex items-center gap-1">
+                <Briefcase className="w-3 h-3 text-amber-800 shrink-0" />
+                <span>المطلوب حالياً</span>
+              </span>
+              <span className="text-[9px] sm:text-[10px] text-amber-800 font-black">المتبقي 🛈</span>
+            </div>
+            <p className="text-[10px] sm:text-xs font-black text-amber-900/85 mt-0.5">إجمالي كل المستحقات</p>
+            <p className="text-lg sm:text-xl font-black text-amber-950 tracking-tight mt-0.5">
+              {renderStatValue(summary.totalAllSupplierDues ?? summary.totalCostOfSales)}
+            </p>
           </div>
-          <p className="text-[10px] sm:text-xs font-black text-amber-800 mt-0.5">مستحق المورد (بالتكلفة)</p>
-          <p className="text-lg sm:text-xl font-black text-amber-950 tracking-tight mt-0.5">{renderStatValue(summary.totalCostOfSales)}</p>
+          <div className="pt-1 mt-1 border-t border-amber-200/80 space-y-0.5">
+            <div className="flex items-center justify-between gap-1 text-[10px] font-black">
+              <span className="text-emerald-900 shrink-0">الحالي:</span>
+              <span className="text-emerald-950 font-mono tabular-nums">{renderStatValue(summary.totalCostOfSales)}</span>
+            </div>
+            <div className="flex items-center justify-between gap-1 text-[10px] font-black">
+              <span className="text-rose-800 shrink-0">المعلقة:</span>
+              <span className="text-rose-900 font-mono tabular-nums">{renderStatValue(summary.pendingSupplierDues ?? 0)}</span>
+            </div>
+          </div>
         </motion.div>
 
         <motion.div 
