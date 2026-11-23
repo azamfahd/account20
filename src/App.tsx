@@ -3261,7 +3261,14 @@ export default function App() {
           color_tag: newNote.color_tag || 'emerald',
           calculated_total: typeof newNote.calculated_total === 'number' ? newNote.calculated_total : 0,
           checklist: Array.isArray(newNote.checklist) ? newNote.checklist : [],
-          is_pinned: Boolean(newNote.is_pinned)
+          is_pinned: Boolean(newNote.is_pinned),
+          paper_style: newNote.paper_style || 'plain',
+          font_size: newNote.font_size || 'base',
+          text_align: newNote.text_align || 'right',
+          font_family: newNote.font_family || 'sans',
+          line_height: newNote.line_height || 'normal',
+          border_style: newNote.border_style || 'gold',
+          auto_sum: newNote.auto_sum !== undefined ? Boolean(newNote.auto_sum) : true
         });
         showNotification('تم تحديث الملاحظة بنجاح');
       } else {
@@ -3276,7 +3283,14 @@ export default function App() {
           color_tag: newNote.color_tag || 'emerald',
           calculated_total: typeof newNote.calculated_total === 'number' ? newNote.calculated_total : 0,
           checklist: Array.isArray(newNote.checklist) ? newNote.checklist : [],
-          is_pinned: Boolean(newNote.is_pinned)
+          is_pinned: Boolean(newNote.is_pinned),
+          paper_style: newNote.paper_style || 'plain',
+          font_size: newNote.font_size || 'base',
+          text_align: newNote.text_align || 'right',
+          font_family: newNote.font_family || 'sans',
+          line_height: newNote.line_height || 'normal',
+          border_style: newNote.border_style || 'gold',
+          auto_sum: newNote.auto_sum !== undefined ? Boolean(newNote.auto_sum) : true
         });
         showNotification('تم حفظ الملاحظة بنجاح');
       }
@@ -6988,6 +7002,9 @@ export default function App() {
               showSalesSummaryModal={showSalesSummaryModal}
               setShowSalesSummaryModal={setShowSalesSummaryModal}
               summary={summary}
+              products={products}
+              saleItems={allSaleItemsForDetails}
+              sales={allSalesForDetails}
               formatPrice={formatPrice}
             />
           )}

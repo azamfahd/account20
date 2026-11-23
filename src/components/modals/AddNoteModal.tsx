@@ -1,15 +1,28 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as math from 'mathjs';
-import { 
-  X, Maximize2, Minimize2, Calculator, Sparkles, Plus, Trash2, 
-  CheckSquare, Square, Palette, FileText, BookOpen, Wallet, 
-  Home, ClipboardList, Bold, Italic, List, Hash, Calendar, 
-  Check, ArrowRight, CornerDownLeft, Divide, Percent, DollarSign,
-  Info, Pin, ChevronDown, Clock, AlertCircle, Bookmark, Layers,
-  Copy, RotateCcw, Save
+import {
+  X, Maximize2, Minimize2, Calculator, Sparkles, Plus, Trash2,
+  CheckSquare, Square, Bold, Italic, Underline, Strikethrough,
+  Highlighter, List, ListOrdered, Divide, Calendar, Check,
+  Pin, Clock, Copy, Save, Eye, Edit3, AlignRight, AlignCenter, AlignLeft,
+  FileSpreadsheet, Heading1, Equal, Type, SlidersHorizontal, Rows3,
+  Quote, Eraser, Palette
 } from 'lucide-react';
-import { Button } from '../ui/Button';
 import type { NoteChecklistItem } from '../../db';
+import {
+  calculateNoteContentTotal,
+  evaluateInlineExpressions,
+  syncSummaryLineInContent,
+  renderFormattedNoteText,
+  sanitizeNoteHtml,
+  htmlToPlainText,
+  noteContentToEditorHtml,
+  NOTE_PAPER_CLASSES,
+  NOTE_FONT_SIZE_CLASSES,
+  NOTE_FONT_FAMILY_CLASSES,
+  NOTE_LINE_HEIGHT_CLASSES,
+  getNoteBorderClass
+} from '../../utils/noteFormatting';
 
 export interface AddNoteModalProps {
   showAddNote: boolean;
@@ -19,6 +32,38 @@ export interface AddNoteModalProps {
   notes: any[];
   handleAddNote: (note: any, resetForm: () => void) => void;
 }
+
+const TEXT_COLOR_SWATCHES = [
+  { label: 'أسود', hex: '#0f172a', dot: 'bg-slate-900' },
+  { label: 'رمادي', hex: '#475569', dot: 'bg-slate-500' },
+  { label: 'أحمر', hex: '#dc2626', dot: 'bg-red-600' },
+  { label: 'أخضر', hex: '#059669', dot: 'bg-emerald-600' },
+  { label: 'أزرق', hex: '#2563eb', dot: 'bg-blue-600' },
+  { label: 'عنبري', hex: '#d97706', dot: 'bg-amber-600' },
+  { label: 'بنفسجي', hex: '#9333ea', dot: 'bg-purple-600' },
+  { label: 'وردي', hex: '#e11d48', dot: 'bg-rose-600' },
+  { label: 'تركوازي', hex: '#0d9488', dot: 'bg-teal-600' },
+  { label: 'برتقالي', hex: '#ea580c', dot: 'bg-orange-600' },
+  { label: 'أبيض', hex: '#ffffff', dot: 'bg-white border border-slate-400' },
+];
+
+const HIGHLIGHT_SWATCHES = [
+  { label: 'بدون', hex: 'transparent', cls: 'bg-slate-700 text-slate-300' },
+  { label: 'أصفر', hex: '#fef08a', cls: 'bg-yellow-200 text-slate-950' },
+  { label: 'أخضر', hex: '#bbf7d0', cls: 'bg-emerald-200 text-slate-950' },
+  { label: 'سماوي', hex: '#bae6fd', cls: 'bg-sky-200 text-slate-950' },
+  { label: 'وردي', hex: '#fecdd3', cls: 'bg-rose-200 text-slate-950' },
+  { label: 'بنفسجي', hex: '#e9d5ff', cls: 'bg-purple-200 text-slate-950' },
+  { label: 'عنبري', hex: '#fde68a', cls: 'bg-amber-200 text-slate-950' },
+];
+
+const INLINE_FONT_SIZES = [
+  { label: 'صغير', cmdVal: '2', px: '14px' },
+  { label: 'عادي', cmdVal: '3', px: '16px' },
+  { label: 'متوسط', cmdVal: '4', px: '18px' },
+  { label: 'كبير', cmdVal: '5', px: '22px' },
+  { label: 'ضخم', cmdVal: '6', px: '26px' },
+];
 
 export const AddNoteModal: React.FC<AddNoteModalProps> = ({
   showAddNote,
@@ -32,8 +77,16 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
   const [showCalculator, setShowCalculator] = useState(false);
   const [calcMode, setCalcMode] = useState<'accounting' | 'scientific'>('accounting');
   const [showChecklistSection, setShowChecklistSection] = useState(false);
+  const [showCustomizationDetails, setShowCustomizationDetails] = useState(false);
+  const [showTemplatesMenu, setShowTemplatesMenu] = useState(false);
+  const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [calcCopied, setCalcCopied] = useState(false);
-  const [isBoldActive, setIsBoldActive] = useState(false);
+  const [activeFormats, setActiveFormats] = useState({
+    bold: false,
+    italic: false,
+    underline: false,
+    strikeThrough: false,
+  });
 
   // Note State
   const [noteState, setNoteState] = useState<{
@@ -46,6 +99,13 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
     calculated_total: number;
     checklist: NoteChecklistItem[];
     is_pinned: boolean;
+    paper_style: 'plain' | 'lined' | 'grid' | 'dots' | 'warm' | 'dark';
+    font_size: 'sm' | 'base' | 'lg' | 'xl';
+    text_align: 'right' | 'center' | 'left';
+    font_family: 'sans' | 'mono' | 'serif';
+    line_height: 'compact' | 'normal' | 'relaxed';
+    border_style: 'gold' | 'themed' | 'double' | 'subtle';
+    auto_sum: boolean;
   }>({
     title: '',
     content: '',
@@ -55,37 +115,69 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
     color_tag: 'emerald',
     calculated_total: 0,
     checklist: [],
-    is_pinned: false
+    is_pinned: false,
+    paper_style: 'plain',
+    font_size: 'base',
+    text_align: 'right',
+    font_family: 'sans',
+    line_height: 'normal',
+    border_style: 'gold',
+    auto_sum: true,
   });
 
   const [newChecklistText, setNewChecklistText] = useState('');
-  const contentTextareaRef = useRef<HTMLTextAreaElement>(null);
-  const templatesDropdownRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
 
-  // Advanced Calculator State
+  // Calculator State
   const [calcDisplay, setCalcDisplay] = useState('0');
   const [calcEquation, setCalcEquation] = useState('');
   const [calcMemory, setCalcMemory] = useState(0);
   const [isNewNumber, setIsNewNumber] = useState(false);
 
+  const syncEditorDom = useCallback((rawContent: string) => {
+    setTimeout(() => {
+      if (editorRef.current) {
+        editorRef.current.innerHTML = noteContentToEditorHtml(rawContent);
+      }
+    }, 0);
+  }, []);
+
   useEffect(() => {
+    if (!showAddNote) return;
+    setIsPreviewMode(false);
+    setShowTemplatesMenu(false);
+
     if (editingNoteId && notes) {
       const note = notes.find((n: any) => n.id === editingNoteId);
       if (note) {
+        const contentStr = note.content || '';
+        const computedFromContent = calculateNoteContentTotal(contentStr);
+        const inferredAutoSum =
+          note.auto_sum !== undefined
+            ? Boolean(note.auto_sum)
+            : !(Number(note.calculated_total || 0) > 0 && computedFromContent === 0);
+
+        const initialHtml = noteContentToEditorHtml(contentStr);
         setNoteState({
           title: note.title || '',
-          content: note.content || '',
+          content: initialHtml,
           reminder_date: note.reminder_date || '',
           priority: note.priority || 'normal',
           category: note.category || 'cashier',
           color_tag: note.color_tag || 'emerald',
-          calculated_total: note.calculated_total || 0,
+          calculated_total: inferredAutoSum ? computedFromContent : (note.calculated_total || 0),
           checklist: Array.isArray(note.checklist) ? note.checklist : [],
-          is_pinned: Boolean(note.is_pinned)
+          is_pinned: Boolean(note.is_pinned),
+          paper_style: note.paper_style || 'plain',
+          font_size: note.font_size || 'base',
+          text_align: note.text_align || 'right',
+          font_family: note.font_family || 'sans',
+          line_height: note.line_height || 'normal',
+          border_style: note.border_style || 'gold',
+          auto_sum: inferredAutoSum,
         });
-        if (Array.isArray(note.checklist) && note.checklist.length > 0) {
-          setShowChecklistSection(true);
-        }
+        setShowChecklistSection(Array.isArray(note.checklist) && note.checklist.length > 0);
+        syncEditorDom(initialHtml);
       }
     } else {
       setNoteState({
@@ -97,36 +189,199 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
         color_tag: 'emerald',
         calculated_total: 0,
         checklist: [],
-        is_pinned: false
+        is_pinned: false,
+        paper_style: 'plain',
+        font_size: 'base',
+        text_align: 'right',
+        font_family: 'sans',
+        line_height: 'normal',
+        border_style: 'gold',
+        auto_sum: true,
       });
       setIsFullScreen(true);
       setShowCalculator(false);
       setShowChecklistSection(false);
+      syncEditorDom('');
     }
-  }, [editingNoteId, notes, showAddNote]);
+  }, [editingNoteId, notes, showAddNote, syncEditorDom]);
+
+  const refreshActiveFormats = () => {
+    try {
+      setActiveFormats({
+        bold: document.queryCommandState('bold'),
+        italic: document.queryCommandState('italic'),
+        underline: document.queryCommandState('underline'),
+        strikeThrough: document.queryCommandState('strikeThrough'),
+      });
+    } catch {
+      // Ignore if queryCommandState isn't ready
+    }
+  };
+
+  // Reads current contentEditable DOM, sanitizes, and updates total in real time without resetting cursor
+  const handleEditorInput = (forceRecalc = false) => {
+    if (!editorRef.current) return;
+    const rawHtml = editorRef.current.innerHTML;
+    const sanitized = sanitizeNoteHtml(rawHtml);
+
+    setNoteState((prev) => {
+      if (prev.auto_sum || forceRecalc) {
+        const freshTotal = calculateNoteContentTotal(sanitized);
+        return {
+          ...prev,
+          content: sanitized,
+          calculated_total: freshTotal,
+        };
+      }
+      return {
+        ...prev,
+        content: sanitized,
+      };
+    });
+    refreshActiveFormats();
+  };
+
+  // Updates content programmatically AND refreshes the DOM (used by templates, calc insert, evaluate)
+  const updateContentAndDom = (nextContent: string, forceRecalc = false) => {
+    const editorHtml = noteContentToEditorHtml(nextContent);
+    setNoteState((prev) => {
+      if (prev.auto_sum || forceRecalc) {
+        const freshTotal = calculateNoteContentTotal(editorHtml);
+        const synced = syncSummaryLineInContent(editorHtml, freshTotal);
+        syncEditorDom(synced);
+        return {
+          ...prev,
+          content: synced,
+          calculated_total: freshTotal,
+        };
+      }
+      syncEditorDom(editorHtml);
+      return {
+        ...prev,
+        content: editorHtml,
+      };
+    });
+  };
+
+  // Applies true WYSIWYG formatting directly inside the editor without any markdown symbols
+  const execWysiwygCommand = (command: string, value?: string) => {
+    if (isPreviewMode) {
+      setIsPreviewMode(false);
+      setTimeout(() => {
+        editorRef.current?.focus();
+        try {
+          document.execCommand(command, false, value);
+          handleEditorInput();
+        } catch {
+          // ignore
+        }
+      }, 20);
+      return;
+    }
+
+    if (editorRef.current && document.activeElement !== editorRef.current) {
+      editorRef.current.focus();
+    }
+
+    try {
+      document.execCommand('styleWithCSS', false, 'true');
+    } catch {
+      // some browsers ignore styleWithCSS
+    }
+    try {
+      document.execCommand(command, false, value);
+    } catch {
+      // fallback noop
+    }
+    handleEditorInput();
+  };
+
+  const handleApplyTextColor = (hex: string) => {
+    execWysiwygCommand('foreColor', hex);
+  };
+
+  const handleApplyHighlightColor = (hex: string) => {
+    if (hex === 'transparent') {
+      execWysiwygCommand('hiliteColor', 'transparent');
+      return;
+    }
+    execWysiwygCommand('hiliteColor', hex);
+  };
+
+  const handleApplyInlineFontSize = (cmdVal: string) => {
+    execWysiwygCommand('fontSize', cmdVal);
+  };
+
+  const handleInsertDivider = () => {
+    execWysiwygCommand('insertHTML', '<hr><div><br></div>');
+  };
+
+  const handleInsertPinBadge = () => {
+    const sel = window.getSelection();
+    const selectedText = sel && sel.toString().trim() ? sel.toString().trim() : 'ملاحظة مهمة';
+    const safeText = selectedText.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    execWysiwygCommand(
+      'insertHTML',
+      `<span data-note-badge="pin" style="background-color:#fde68a;color:#92400e">📌 ${safeText}</span>&nbsp;`
+    );
+  };
+
+  const handleInsertDateTime = () => {
+    const now = new Date();
+    const stamp = `${now.toLocaleDateString('ar-SA')} ${now.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}`;
+    execWysiwygCommand('insertText', `📅 ${stamp} `);
+  };
+
+  const handleToggleHeading = () => {
+    const sel = window.getSelection();
+    const parentBlock = sel?.anchorNode
+      ? (sel.anchorNode.nodeType === Node.ELEMENT_NODE
+          ? (sel.anchorNode as HTMLElement)
+          : sel.anchorNode.parentElement)?.closest('h1,h2,h3')
+      : null;
+    if (parentBlock) {
+      execWysiwygCommand('formatBlock', 'DIV');
+    } else {
+      execWysiwygCommand('formatBlock', 'H2');
+    }
+  };
+
+  const handleToggleQuote = () => {
+    const sel = window.getSelection();
+    const parentQuote = sel?.anchorNode
+      ? (sel.anchorNode.nodeType === Node.ELEMENT_NODE
+          ? (sel.anchorNode as HTMLElement)
+          : sel.anchorNode.parentElement)?.closest('blockquote')
+      : null;
+    if (parentQuote) {
+      execWysiwygCommand('formatBlock', 'DIV');
+    } else {
+      execWysiwygCommand('formatBlock', 'BLOCKQUOTE');
+    }
+  };
+
+  const handleClearSelectionFormat = () => {
+    execWysiwygCommand('removeFormat');
+  };
 
   // --- Advanced Calculator Logic Powered by Mathjs ---
   const handleCalcNumber = (num: string) => {
     if (isNewNumber) {
-      if (calcEquation.endsWith('=')) {
-        setCalcEquation('');
-      }
+      if (calcEquation.endsWith('=')) setCalcEquation('');
       setCalcDisplay(num);
       setIsNewNumber(false);
     } else {
-      setCalcDisplay(prev => prev === '0' || prev === 'Error' ? num : prev + num);
+      setCalcDisplay((prev) => (prev === '0' || prev === 'Error' ? num : prev + num));
     }
   };
 
   const handleCalcDecimal = () => {
     if (isNewNumber) {
-      if (calcEquation.endsWith('=')) {
-        setCalcEquation('');
-      }
+      if (calcEquation.endsWith('=')) setCalcEquation('');
       setCalcDisplay('0.');
       setIsNewNumber(false);
     } else if (!calcDisplay.includes('.')) {
-      setCalcDisplay(prev => prev + '.');
+      setCalcDisplay((prev) => prev + '.');
     }
   };
 
@@ -134,24 +389,23 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
     if (calcEquation.endsWith('=')) {
       setCalcEquation(calcDisplay + ' ' + op + ' ');
     } else {
-      setCalcEquation(prev => prev + calcDisplay + ' ' + op + ' ');
+      setCalcEquation((prev) => prev + calcDisplay + ' ' + op + ' ');
     }
     setIsNewNumber(true);
   };
 
   const handleCalcEquals = () => {
     try {
-      let rawExpr = calcEquation.endsWith('=') ? calcDisplay : (calcEquation + (isNewNumber ? '' : calcDisplay)).trim();
+      let rawExpr = calcEquation.endsWith('=')
+        ? calcDisplay
+        : (calcEquation + (isNewNumber ? '' : calcDisplay)).trim();
       if (!rawExpr) rawExpr = calcDisplay;
 
-      // Automatically close unclosed parentheses before evaluating
       const openCount = (rawExpr.match(/\(/g) || []).length;
       const closeCount = (rawExpr.match(/\)/g) || []).length;
-      if (openCount > closeCount) {
-        rawExpr += ')'.repeat(openCount - closeCount);
-      }
+      if (openCount > closeCount) rawExpr += ')'.repeat(openCount - closeCount);
 
-      let fullExpr = rawExpr
+      const fullExpr = rawExpr
         .replace(/×/g, '*')
         .replace(/÷/g, '/')
         .replace(/π/g, 'pi')
@@ -180,22 +434,21 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
       setCalcEquation('(');
       setCalcDisplay('0');
     } else if (!isNewNumber && calcDisplay !== '0' && calcDisplay !== 'Error') {
-      setCalcEquation(prev => prev + calcDisplay + ' × (');
+      setCalcEquation((prev) => prev + calcDisplay + ' × (');
       setCalcDisplay('0');
     } else {
-      setCalcEquation(prev => prev + '(');
+      setCalcEquation((prev) => prev + '(');
     }
     setIsNewNumber(true);
   };
 
   const handleCalcCloseParen = () => {
     if (calcEquation.endsWith('=')) return;
-    const currentVal = (!isNewNumber && calcDisplay !== '0' && calcDisplay !== 'Error') ? calcDisplay : '';
-    setCalcEquation(prev => prev + currentVal + ') ');
+    const currentVal = !isNewNumber && calcDisplay !== '0' && calcDisplay !== 'Error' ? calcDisplay : '';
+    setCalcEquation((prev) => prev + currentVal + ') ');
     setIsNewNumber(true);
   };
 
-  // Fraction converter & divider (بسط ومقام a/b)
   const handleCalcToFraction = () => {
     try {
       const num = Number(calcDisplay);
@@ -218,313 +471,212 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
     }
   };
 
-  // Live Equation / Expression display for real-time visual feedback
   const getLiveEquationDisplay = () => {
-    if (calcEquation.endsWith('=')) {
-      return calcEquation;
-    }
+    if (calcEquation.endsWith('=')) return calcEquation;
     if (calcEquation) {
-      if (!isNewNumber && calcDisplay !== '0' && calcDisplay !== 'Error') {
-        return `${calcEquation}${calcDisplay}`;
-      }
+      if (!isNewNumber && calcDisplay !== '0' && calcDisplay !== 'Error') return `${calcEquation}${calcDisplay}`;
       return calcEquation;
     }
-    if (calcDisplay !== '0' && calcDisplay !== 'Error') {
-      return calcDisplay;
-    }
+    if (calcDisplay !== '0' && calcDisplay !== 'Error') return calcDisplay;
     return 'جاهزة';
   };
 
-  const handleCalcClearEntry = () => {
-    setCalcDisplay('0');
-  };
-
+  const handleCalcClearEntry = () => setCalcDisplay('0');
   const handleCalcAllClear = () => {
     setCalcDisplay('0');
     setCalcEquation('');
   };
-
-  const handleCalcBackspace = () => {
-    setCalcDisplay(prev => (prev.length > 1 && prev !== 'Error') ? prev.slice(0, -1) : '0');
-  };
-
+  const handleCalcBackspace = () => setCalcDisplay((prev) => (prev.length > 1 && prev !== 'Error' ? prev.slice(0, -1) : '0'));
   const handleCalcToggleSign = () => {
     const num = Number(calcDisplay);
-    if (!isNaN(num)) {
-      setCalcDisplay(String(-num));
-    }
+    if (!isNaN(num)) setCalcDisplay(String(-num));
   };
-
   const handleCalcPercentage = () => {
     const num = Number(calcDisplay);
-    if (!isNaN(num)) {
-      setCalcDisplay(String(num / 100));
-    }
+    if (!isNaN(num)) setCalcDisplay(String(num / 100));
   };
-
-  // Accounting Specific: VAT +15%
   const handleCalcAddTax15 = () => {
     const num = Number(calcDisplay);
     if (!isNaN(num)) {
-      const withTax = Math.round(num * 1.15 * 100) / 100;
       setCalcEquation(`${num} + 15% ض.ق.م = `);
-      setCalcDisplay(String(withTax));
+      setCalcDisplay(String(Math.round(num * 1.15 * 100) / 100));
       setIsNewNumber(true);
     }
   };
-
-  // Accounting Specific: Remove VAT -15%
   const handleCalcRemoveTax15 = () => {
     const num = Number(calcDisplay);
     if (!isNaN(num)) {
-      const base = Math.round((num / 1.15) * 100) / 100;
       setCalcEquation(`${num} - 15% ض.ق.م = `);
-      setCalcDisplay(String(base));
+      setCalcDisplay(String(Math.round((num / 1.15) * 100) / 100));
       setIsNewNumber(true);
     }
   };
-
-  // Accounting Specific: Tax portion only
   const handleCalcTaxOnly15 = () => {
     const num = Number(calcDisplay);
     if (!isNaN(num)) {
-      const taxAmount = Math.round(num * 0.15 * 100) / 100;
       setCalcEquation(`ضريبة 15% من ${num} = `);
-      setCalcDisplay(String(taxAmount));
+      setCalcDisplay(String(Math.round(num * 0.15 * 100) / 100));
       setIsNewNumber(true);
     }
   };
-
-  // --- Scientific Specific Functions using MathJS ---
-  // Square Root √x
   const handleCalcSqrt = () => {
     try {
       const num = Number(calcDisplay);
       if (!isNaN(num) && num >= 0) {
         const res = math.sqrt(num);
-        const val = typeof res === 'number' ? Math.round(res * 100000) / 100000 : res.toString();
         setCalcEquation(`√(${num}) = `);
-        setCalcDisplay(String(val));
+        setCalcDisplay(String(typeof res === 'number' ? Math.round(res * 100000) / 100000 : res.toString()));
         setIsNewNumber(true);
-      } else {
-        setCalcDisplay('Error');
-      }
+      } else setCalcDisplay('Error');
     } catch {
       setCalcDisplay('Error');
     }
   };
-
-  // Cube Root ∛x
   const handleCalcCbrt = () => {
     try {
       const num = Number(calcDisplay);
       if (!isNaN(num)) {
-        const res = math.cbrt(num);
-        const val = Math.round(Number(res) * 100000) / 100000;
         setCalcEquation(`∛(${num}) = `);
-        setCalcDisplay(String(val));
+        setCalcDisplay(String(Math.round(Number(math.cbrt(num)) * 100000) / 100000));
         setIsNewNumber(true);
       }
     } catch {
       setCalcDisplay('Error');
     }
   };
-
-  // Power (x ^ y)
   const handleCalcPowerY = () => {
-    setCalcEquation(prev => prev + calcDisplay + ' ^ ');
+    setCalcEquation((prev) => prev + calcDisplay + ' ^ ');
     setIsNewNumber(true);
   };
-
-  // Square (x²)
   const handleCalcSquare = () => {
     try {
       const num = Number(calcDisplay);
       if (!isNaN(num)) {
-        const res = math.pow(num, 2);
-        const val = Math.round(Number(res) * 100000) / 100000;
         setCalcEquation(`sqr(${num}) = `);
-        setCalcDisplay(String(val));
+        setCalcDisplay(String(Math.round(Number(math.pow(num, 2)) * 100000) / 100000));
         setIsNewNumber(true);
       }
     } catch {
       setCalcDisplay('Error');
     }
   };
-
-  // Cube (x³)
-  const handleCalcCube = () => {
-    try {
-      const num = Number(calcDisplay);
-      if (!isNaN(num)) {
-        const res = math.pow(num, 3);
-        const val = Math.round(Number(res) * 100000) / 100000;
-        setCalcEquation(`cube(${num}) = `);
-        setCalcDisplay(String(val));
-        setIsNewNumber(true);
-      }
-    } catch {
-      setCalcDisplay('Error');
-    }
-  };
-
-  // 10^x
-  const handleCalcExp10 = () => {
-    try {
-      const num = Number(calcDisplay);
-      if (!isNaN(num)) {
-        const res = math.pow(10, num);
-        setCalcEquation(`10^(${num}) = `);
-        setCalcDisplay(String(res));
-        setIsNewNumber(true);
-      }
-    } catch {
-      setCalcDisplay('Error');
-    }
-  };
-
-  // e^x
-  const handleCalcExpE = () => {
-    try {
-      const num = Number(calcDisplay);
-      if (!isNaN(num)) {
-        const res = math.exp(num);
-        const val = Math.round(Number(res) * 100000) / 100000;
-        setCalcEquation(`e^(${num}) = `);
-        setCalcDisplay(String(val));
-        setIsNewNumber(true);
-      }
-    } catch {
-      setCalcDisplay('Error');
-    }
-  };
-
-  // Natural Logarithm ln(x)
   const handleCalcLn = () => {
     try {
       const num = Number(calcDisplay);
       if (!isNaN(num) && num > 0) {
-        const res = math.log(num);
-        const val = Math.round(Number(res) * 100000) / 100000;
         setCalcEquation(`ln(${num}) = `);
-        setCalcDisplay(String(val));
+        setCalcDisplay(String(Math.round(Number(math.log(num)) * 100000) / 100000));
         setIsNewNumber(true);
-      } else {
-        setCalcDisplay('Error');
-      }
+      } else setCalcDisplay('Error');
     } catch {
       setCalcDisplay('Error');
     }
   };
-
-  // Base 10 Logarithm log10(x)
   const handleCalcLog10 = () => {
     try {
       const num = Number(calcDisplay);
       if (!isNaN(num) && num > 0) {
-        const res = math.log10(num);
-        const val = Math.round(Number(res) * 100000) / 100000;
         setCalcEquation(`log10(${num}) = `);
-        setCalcDisplay(String(val));
+        setCalcDisplay(String(Math.round(Number(math.log10(num)) * 100000) / 100000));
         setIsNewNumber(true);
-      } else {
-        setCalcDisplay('Error');
+      } else setCalcDisplay('Error');
+    } catch {
+      setCalcDisplay('Error');
+    }
+  };
+  const handleCalcExp10 = () => {
+    try {
+      const num = Number(calcDisplay);
+      if (!isNaN(num)) {
+        setCalcEquation(`10^(${num}) = `);
+        setCalcDisplay(String(math.pow(10, num)));
+        setIsNewNumber(true);
       }
     } catch {
       setCalcDisplay('Error');
     }
   };
-
-  // Trigonometry: sin, cos, tan
+  const handleCalcExpE = () => {
+    try {
+      const num = Number(calcDisplay);
+      if (!isNaN(num)) {
+        setCalcEquation(`e^(${num}) = `);
+        setCalcDisplay(String(Math.round(Number(math.exp(num)) * 100000) / 100000));
+        setIsNewNumber(true);
+      }
+    } catch {
+      setCalcDisplay('Error');
+    }
+  };
   const handleCalcSin = () => {
     try {
       const num = Number(calcDisplay);
       if (!isNaN(num)) {
-        const res = math.sin(num);
-        const val = Math.round(Number(res) * 100000) / 100000;
         setCalcEquation(`sin(${num}) = `);
-        setCalcDisplay(String(val));
+        setCalcDisplay(String(Math.round(Number(math.sin(num)) * 100000) / 100000));
         setIsNewNumber(true);
       }
     } catch {
       setCalcDisplay('Error');
     }
   };
-
   const handleCalcCos = () => {
     try {
       const num = Number(calcDisplay);
       if (!isNaN(num)) {
-        const res = math.cos(num);
-        const val = Math.round(Number(res) * 100000) / 100000;
         setCalcEquation(`cos(${num}) = `);
-        setCalcDisplay(String(val));
+        setCalcDisplay(String(Math.round(Number(math.cos(num)) * 100000) / 100000));
         setIsNewNumber(true);
       }
     } catch {
       setCalcDisplay('Error');
     }
   };
-
   const handleCalcTan = () => {
     try {
       const num = Number(calcDisplay);
       if (!isNaN(num)) {
-        const res = math.tan(num);
-        const val = Math.round(Number(res) * 100000) / 100000;
         setCalcEquation(`tan(${num}) = `);
-        setCalcDisplay(String(val));
+        setCalcDisplay(String(Math.round(Number(math.tan(num)) * 100000) / 100000));
         setIsNewNumber(true);
       }
     } catch {
       setCalcDisplay('Error');
     }
   };
-
-  // Factorial n!
   const handleCalcFactorial = () => {
     try {
       const num = Number(calcDisplay);
       if (!isNaN(num) && num >= 0 && Number.isInteger(num) && num <= 100) {
-        const res = math.factorial(num);
         setCalcEquation(`fact(${num}) = `);
-        setCalcDisplay(String(res));
+        setCalcDisplay(String(math.factorial(num)));
         setIsNewNumber(true);
-      } else {
-        setCalcDisplay('Error');
-      }
+      } else setCalcDisplay('Error');
     } catch {
       setCalcDisplay('Error');
     }
   };
-
-  // Absolute value |x|
   const handleCalcAbs = () => {
     try {
       const num = Number(calcDisplay);
       if (!isNaN(num)) {
-        const res = math.abs(num);
         setCalcEquation(`abs(${num}) = `);
-        setCalcDisplay(String(res));
+        setCalcDisplay(String(math.abs(num)));
         setIsNewNumber(true);
       }
     } catch {
       setCalcDisplay('Error');
     }
   };
-
-  // Reciprocal 1/x
   const handleCalcReciprocal = () => {
     const num = Number(calcDisplay);
     if (!isNaN(num) && num !== 0) {
-      const res = Math.round((1 / num) * 100000) / 100000;
       setCalcEquation(`1/(${num}) = `);
-      setCalcDisplay(String(res));
+      setCalcDisplay(String(Math.round((1 / num) * 100000) / 100000));
       setIsNewNumber(true);
     }
   };
 
-  // Memory functions
   const handleCalcMemoryClear = () => setCalcMemory(0);
   const handleCalcMemoryRecall = () => {
     setCalcDisplay(String(calcMemory));
@@ -532,20 +684,22 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
   };
   const handleCalcMemoryAdd = () => {
     const num = Number(calcDisplay);
-    if (!isNaN(num)) setCalcMemory(prev => prev + num);
+    if (!isNaN(num)) setCalcMemory((prev) => prev + num);
   };
   const handleCalcMemorySub = () => {
     const num = Number(calcDisplay);
-    if (!isNaN(num)) setCalcMemory(prev => prev - num);
+    if (!isNaN(num)) setCalcMemory((prev) => prev - num);
   };
 
-  // Insert calculator result directly into note text
   const handleInsertCalcResult = () => {
-    const formatted = `${calcDisplay} ريال`;
-    setNoteState(prev => ({
-      ...prev,
-      content: prev.content ? `${prev.content} ${formatted}` : formatted
-    }));
+    const formatted = `${calcDisplay} ريال `;
+    if (!isPreviewMode && editorRef.current) {
+      editorRef.current.focus();
+      execWysiwygCommand('insertHTML', `<span style="color:#059669"><b>${formatted}</b></span>`);
+    } else {
+      const next = `${noteState.content}<div><span style="color:#059669"><b>${formatted}</b></span></div>`;
+      updateContentAndDom(next, true);
+    }
   };
 
   const handleCopyCalcResult = () => {
@@ -554,82 +708,28 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
     setTimeout(() => setCalcCopied(false), 2000);
   };
 
-  // Auto Sum Numbers inside the text
+  // Evaluate inline expressions & update live calculated total cleanly
   const handleAutoSumContentNumbers = () => {
-    const matches = noteState.content.match(/\d+(?:\.\d+)?/g);
-    if (matches && matches.length > 0) {
-      const total = matches.reduce((acc, curr) => acc + parseFloat(curr), 0);
-      const rounded = Math.round(total * 100) / 100;
-      setNoteState(prev => ({
-        ...prev,
-        calculated_total: rounded,
-        content: prev.content.includes('الإجمالي المحسوب:')
-          ? prev.content
-          : `${prev.content}\n\nالإجمالي المحسوب: ${rounded.toLocaleString('ar-SA')} ريال`
-      }));
-    }
+    const currentHtml = editorRef.current ? sanitizeNoteHtml(editorRef.current.innerHTML) : noteState.content;
+    const { updatedContent } = evaluateInlineExpressions(currentHtml);
+    const total = calculateNoteContentTotal(updatedContent);
+    const summaryBannerHtml = `<div><span style="background-color:#bbf7d0;color:#059669"><b>الإجمالي المحسوب: ${total.toLocaleString('ar-SA')} ريال</b></span></div>`;
+    const nextContent = updatedContent.includes('الإجمالي المحسوب:')
+      ? syncSummaryLineInContent(updatedContent, total)
+      : htmlToPlainText(updatedContent).trim()
+        ? `${updatedContent}${summaryBannerHtml}`
+        : '';
+
+    setNoteState((prev) => ({
+      ...prev,
+      auto_sum: true,
+      calculated_total: total,
+      content: nextContent,
+    }));
+    syncEditorDom(nextContent);
   };
 
-  // Format Helper for Textarea - Smart Cursor & Formatting
-  const handleApplyFormatting = (type: string) => {
-    const textarea = contentTextareaRef.current;
-    if (!textarea) return;
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const selectedText = noteState.content.substring(start, end);
-    let replacement = '';
-    let cursorOffset = 0;
-
-    switch (type) {
-      case 'bold':
-        if (selectedText) {
-          replacement = `**${selectedText}**`;
-          cursorOffset = replacement.length;
-        } else {
-          replacement = '****';
-          cursorOffset = 2; // Position cursor inside **|**
-        }
-        break;
-
-      case 'list':
-        if (selectedText) {
-          replacement = `\n• ${selectedText}`;
-          cursorOffset = replacement.length;
-        } else {
-          replacement = '\n• ';
-          cursorOffset = replacement.length;
-        }
-        break;
-
-      case 'divider':
-        replacement = '\n----------------------------------------\n';
-        cursorOffset = replacement.length;
-        break;
-
-      case 'highlight':
-        if (selectedText) {
-          replacement = `📌 [${selectedText}]`;
-          cursorOffset = replacement.length;
-        } else {
-          replacement = '📌 []';
-          cursorOffset = 4; // Position cursor inside 📌 [|]
-        }
-        break;
-
-      default:
-        return;
-    }
-
-    const newContent = noteState.content.substring(0, start) + replacement + noteState.content.substring(end);
-    setNoteState(prev => ({ ...prev, content: newContent }));
-
-    setTimeout(() => {
-      textarea.focus();
-      textarea.setSelectionRange(start + cursorOffset, start + cursorOffset);
-    }, 50);
-  };
-
-  // High-Quality Professional Template Loader
+  // High-Quality Professional Template Loader (WYSIWYG visual HTML directly)
   const handleApplyTemplate = (type: string) => {
     const now = new Date();
     const dateStr = now.toLocaleDateString('ar-SA');
@@ -643,7 +743,7 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
     switch (type) {
       case 'cashier_shift':
         tTitle = `تسليم وردية الصندوق - ${dateStr}`;
-        tContent = `🏦 تقرير تسليم وردية الصندوق اليومي:\n----------------------------------------\n📅 التاريخ والوقت: ${dateStr} - ${timeStr}\n💵 العهدة الافتتاحية بالدرج: 0.00 ريال\n💰 إجمالي المبيعات النقدية: 0.00 ريال\n💳 مبيعات الشبكة / التحويلات: 0.00 ريال\n📉 المصروفات النثرية والمسحوبات: 0.00 ريال\n\n📌 ملخص الصندوق والنقدية:\n• النقدية الفعلية المسلمة: 0.00 ريال\n• فارق الوردية (عجز / زيادة): 0.00 ريال\n\n📝 ملاحظات موظف الصندوق:\n`;
+        tContent = `# 🏦 تقرير تسليم وردية الصندوق اليومي\n----------------------------------------\n📅 التاريخ والوقت: ${dateStr} - ${timeStr}\n• العهدة الافتتاحية بالدرج: 0\n• إجمالي المبيعات النقدية: 0\n• مبيعات الشبكة / التحويلات: 0\n• المصروفات النثرية والمسحوبات: 0\n\n## 📌 ملخص الصندوق والنقدية\n• النقدية الفعلية المسلمة: 0\n• فارق الوردية (عجز / زيادة): 0\n\n📝 ملاحظات موظف الصندوق:\n`;
         tCategory = 'cashier';
         tChecklist = [
           { id: '1', text: 'مطابقة تقرير الشبكة (POS) مع البنك', done: false },
@@ -651,21 +751,19 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
           { id: '3', text: 'تجهيز المبلغ للإيداع وتوقيع المستلم', done: false },
         ];
         break;
-
       case 'external_deal':
         tTitle = `حساب ومعاملة خارجية - ${dateStr}`;
-        tContent = `💼 بيان معاملة وحساب خارجي:\n----------------------------------------\n👤 اسم العميل / الجهة: \n📞 رقم الجوال / المرجع: \n📅 موعد الاستحقاق والسداد: \n\n📊 التفاصيل المالية:\n• إجمالي المبلغ المتفق عليه: 0.00 ريال\n• الدفعة الأولى المقبوضة: 0.00 ريال\n• المتبقي المترتب بالحساب: 0.00 ريال\n\n📄 بنود وشروط الاتفاقية:\n• \n`;
+        tContent = `# 💼 بيان معاملة وحساب خارجي\n----------------------------------------\n👤 اسم العميل / الجهة: \n📞 رقم الجوال / المرجع: \n📅 موعد الاستحقاق والسداد: \n\n## 📊 التفاصيل المالية\n• إجمالي المبلغ المتفق عليه: 0\n• الدفعة الأولى المقبوضة: 0\n• المتبقي المترتب بالحساب: 0\n\n📄 بنود وشروط الاتفاقية:\n• \n`;
         tCategory = 'external_account';
         tChecklist = [
           { id: '1', text: 'توقيع وتوثيق عقد المعاملة', done: false },
           { id: '2', text: 'تحصيل الدفعة المقدمة وإصدار سند', done: false },
-          { id: '3', text: 'جدولة باقى المستحقات والمتابعة', done: false },
+          { id: '3', text: 'جدولة باقي المستحقات والمتابعة', done: false },
         ];
         break;
-
       case 'living_expenses':
         tTitle = `جدول المصاريف والنفقات المعيشية - ${dateStr}`;
-        tContent = `🏠 ميزانية ونفقات المعيشة:\n----------------------------------------\n📌 جدول المصروفات الرئيسية:\n• إيجار / فواتير الخدمة (كهرباء/ماء): 0.00 ريال\n• مشتريات السوبرماركت والمنزل: 0.00 ريال\n• الوقود، الصيانة والنقل: 0.00 ريال\n• مصاريف شخصية ومتفرقة: 0.00 ريال\n\n💡 ملاحظات ترشيد الميزانية:\n`;
+        tContent = `# 🏠 ميزانية ونفقات المعيشة\n----------------------------------------\n• إيجار / فواتير الخدمة (كهرباء/ماء): 0\n• مشتريات السوبرماركت والمنزل: 0\n• الوقود، الصيانة والنقل: 0\n• مصاريف شخصية ومتفرقة: 0\n\n💡 ملاحظات ترشيد الميزانية:\n`;
         tCategory = 'living_expenses';
         tChecklist = [
           { id: '1', text: 'سداد الفواتير الحكومية والشهرية', done: false },
@@ -673,16 +771,14 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
           { id: '3', text: 'رصد المتبقي في الادخار', done: false },
         ];
         break;
-
       case 'diary_idea':
         tTitle = `مذكرات وخواطر يومية - ${dateStr}`;
-        tContent = `📖 تدوين خواطر وأفكار يومية:\n----------------------------------------\n⏰ الوقت: ${timeStr}\n🌟 فكرة / إنجاز اليوم:\n\n💬 الخاطرة أو التدوين الحر:\n\n🎯 دروس وتوصيات للغد:\n`;
+        tContent = `# 📖 تدوين خواطر وأفكار يومية\n----------------------------------------\n⏰ الوقت: ${timeStr}\n🌟 فكرة / إنجاز اليوم:\n\n💬 الخاطرة أو التدوين الحر:\n\n🎯 دروس وتوصيات للغد:\n`;
         tCategory = 'personal_diary';
         break;
-
       case 'todo_list':
         tTitle = `قائمة المهام والمتابعات اليومية - ${dateStr}`;
-        tContent = `📋 قائمة متابعة الأعمال والمهام:\n----------------------------------------\n🎯 أهداف اليوم الأساسية:\n• \n\n📌 المتابعات الهامة:\n• \n`;
+        tContent = `# 📋 قائمة متابعة الأعمال والمهام\n----------------------------------------\n🎯 أهداف اليوم الأساسية:\n• \n\n📌 المتابعات الهامة:\n• \n`;
         tCategory = 'todo';
         tChecklist = [
           { id: '1', text: 'مراجعة الحسابات والتسويات اليومية', done: false },
@@ -690,19 +786,24 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
           { id: '3', text: 'أخذ نسخة احتياطية وآمنة للبيانات', done: false },
         ];
         break;
-
       default:
         return;
     }
 
-    setNoteState(prev => ({
+    const htmlTemplate = noteContentToEditorHtml(tContent);
+    const total = calculateNoteContentTotal(htmlTemplate);
+    setNoteState((prev) => ({
       ...prev,
-      title: tTitle,
-      content: tContent,
+      title: prev.title.trim() ? prev.title : tTitle,
+      content: htmlTemplate,
       category: tCategory,
-      checklist: tChecklist.length > 0 ? tChecklist : prev.checklist
+      calculated_total: prev.auto_sum ? total : prev.calculated_total,
+      checklist: tChecklist.length > 0 ? tChecklist : prev.checklist,
     }));
     if (tChecklist.length > 0) setShowChecklistSection(true);
+    setShowTemplatesMenu(false);
+    setIsPreviewMode(false);
+    syncEditorDom(htmlTemplate);
   };
 
   // Checklist Actions
@@ -711,41 +812,41 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
     const newItem: NoteChecklistItem = {
       id: Date.now().toString(),
       text: newChecklistText.trim(),
-      done: false
+      done: false,
     };
-    setNoteState(prev => ({ ...prev, checklist: [...prev.checklist, newItem] }));
+    setNoteState((prev) => ({ ...prev, checklist: [...prev.checklist, newItem] }));
     setNewChecklistText('');
   };
 
   const handleToggleCheckItem = (id: string) => {
-    setNoteState(prev => ({
+    setNoteState((prev) => ({
       ...prev,
-      checklist: prev.checklist.map(item => item.id === id ? { ...item, done: !item.done } : item)
+      checklist: prev.checklist.map((item) => (item.id === id ? { ...item, done: !item.done } : item)),
     }));
   };
 
   const handleRemoveCheckItem = (id: string) => {
-    setNoteState(prev => ({
+    setNoteState((prev) => ({
       ...prev,
-      checklist: prev.checklist.filter(item => item.id !== id)
+      checklist: prev.checklist.filter((item) => item.id !== id),
     }));
   };
 
   const handleSave = () => {
-    if (!noteState.title.trim() && !noteState.content.trim()) return;
+    const latestHtml = editorRef.current ? sanitizeNoteHtml(editorRef.current.innerHTML) : noteState.content;
+    const plainContent = htmlToPlainText(latestHtml);
+    if (!noteState.title.trim() && !plainContent.trim()) return;
 
-    // Recalculate numbers if total is 0
-    let finalTotal = noteState.calculated_total;
-    if (finalTotal === 0) {
-      const matches = noteState.content.match(/\d+(?:\.\d+)?/g);
-      if (matches && matches.length > 0) {
-        finalTotal = Math.round(matches.reduce((acc, curr) => acc + parseFloat(curr), 0) * 100) / 100;
-      }
-    }
+    const finalTotal = noteState.auto_sum
+      ? calculateNoteContentTotal(latestHtml)
+      : noteState.calculated_total;
+    const syncedContent = noteState.auto_sum
+      ? syncSummaryLineInContent(latestHtml, finalTotal)
+      : latestHtml;
 
     const noteData = {
       title: noteState.title.trim() || 'ملاحظة بدون عنوان',
-      content: noteState.content.trim(),
+      content: syncedContent.trim(),
       reminder_date: noteState.reminder_date || null,
       priority: noteState.priority,
       category: noteState.category,
@@ -753,7 +854,14 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
       calculated_total: finalTotal,
       checklist: noteState.checklist,
       is_pinned: noteState.is_pinned,
-      is_completed: false
+      paper_style: noteState.paper_style,
+      font_size: noteState.font_size,
+      text_align: noteState.text_align,
+      font_family: noteState.font_family,
+      line_height: noteState.line_height,
+      border_style: noteState.border_style,
+      auto_sum: noteState.auto_sum,
+      is_completed: false,
     };
 
     handleAddNote(noteData, () => {
@@ -768,53 +876,71 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
         color_tag: 'emerald',
         calculated_total: 0,
         checklist: [],
-        is_pinned: false
+        is_pinned: false,
+        paper_style: 'plain',
+        font_size: 'base',
+        text_align: 'right',
+        font_family: 'sans',
+        line_height: 'normal',
+        border_style: 'gold',
+        auto_sum: true,
       });
       setShowCalculator(false);
       setShowChecklistSection(false);
+      setShowCustomizationDetails(false);
     });
   };
 
   if (!showAddNote) return null;
 
-  // Category Configuration
   const categoriesList = [
     { key: 'cashier', label: '🏦 وردية الصندوق', color: 'emerald' },
     { key: 'external_account', label: '💼 حسابات خارجية', color: 'sky' },
     { key: 'living_expenses', label: '🏠 مصاريف معيشة', color: 'purple' },
     { key: 'personal_diary', label: '📖 مذكرات وخواطر', color: 'amber' },
-    { key: 'todo', label: '📋 قائمة مهام', color: 'rose' }
+    { key: 'todo', label: '📋 قائمة مهام', color: 'rose' },
   ];
 
-  // Color themes
   const colorPalette = [
     { id: 'emerald', bg: 'bg-emerald-500', name: 'زمردي' },
     { id: 'sky', bg: 'bg-sky-500', name: 'سماوي' },
+    { id: 'indigo', bg: 'bg-indigo-500', name: 'نيلي' },
+    { id: 'teal', bg: 'bg-teal-500', name: 'تركوازي' },
     { id: 'purple', bg: 'bg-purple-500', name: 'بنفسجي' },
     { id: 'amber', bg: 'bg-amber-500', name: 'عنبري' },
     { id: 'rose', bg: 'bg-rose-500', name: 'وردي' },
     { id: 'slate', bg: 'bg-slate-700', name: 'كلاسيكي' },
   ];
 
+  const activePaperClass = NOTE_PAPER_CLASSES[noteState.paper_style] || NOTE_PAPER_CLASSES.plain;
+  const activeFontClass = NOTE_FONT_SIZE_CLASSES[noteState.font_size] || NOTE_FONT_SIZE_CLASSES.base;
+  const activeFamilyClass = NOTE_FONT_FAMILY_CLASSES[noteState.font_family] || NOTE_FONT_FAMILY_CLASSES.sans;
+  const activeLineHeightClass = NOTE_LINE_HEIGHT_CLASSES[noteState.line_height] || NOTE_LINE_HEIGHT_CLASSES.normal;
+  const activeAlignClass =
+    noteState.text_align === 'center'
+      ? 'text-center'
+      : noteState.text_align === 'left'
+      ? 'text-left'
+      : 'text-right';
+  const activeCanvasBorder = getNoteBorderClass(noteState.border_style, noteState.color_tag);
+  const plainTextLength = htmlToPlainText(noteState.content).length;
+
   return (
-    <div className={`fixed inset-0 bg-slate-950/85 backdrop-blur-xs z-50 flex items-center justify-center ${
-      isFullScreen ? 'p-0' : 'p-2 sm:p-4'
-    }`}>
-      {/* Outer Modal Container with Gorgeous Gold Trim */}
-      <div 
-        className={`bg-white text-right shadow-2xl flex flex-col overflow-hidden border-2 border-amber-400/90 shadow-amber-500/20 ring-1 ring-amber-300/50 relative ${
-          isFullScreen 
-            ? 'w-full h-full rounded-none' 
+    <div
+      className={`fixed inset-0 bg-slate-950/85 backdrop-blur-xs z-50 flex items-center justify-center ${
+        isFullScreen ? 'p-0' : 'p-2 sm:p-4'
+      }`}
+    >
+      <div
+        className={`bg-white text-right shadow-2xl flex flex-col overflow-hidden border-2 border-amber-400/90 ring-1 ring-amber-300/40 relative ${
+          isFullScreen
+            ? 'w-full h-full rounded-none'
             : 'w-full max-w-5xl h-[94vh] max-h-[950px] rounded-3xl'
         }`}
       >
         {/* TOP COMPACT HEADER & UNIFIED TOOLBAR */}
         <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 text-white border-b border-amber-500/40 shrink-0 select-none">
-          
-          {/* Main Line */}
           <div className="px-3 py-2 sm:px-4 flex items-center justify-between gap-2">
-            
-            {/* Window Controls & Quick Save (Left in RTL) */}
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
@@ -824,16 +950,18 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
               >
                 {isFullScreen ? <Minimize2 className="w-4 h-4 text-amber-400" /> : <Maximize2 className="w-4 h-4" />}
               </button>
-              <button 
+              <button
                 type="button"
-                onClick={() => { setShowAddNote(false); setEditingNoteId(null); }} 
+                onClick={() => {
+                  setShowAddNote(false);
+                  setEditingNoteId(null);
+                }}
                 className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-rose-500/30 transition-colors cursor-pointer"
                 title="إغلاق"
               >
                 <X className="w-4 h-4" />
               </button>
 
-              {/* Fast Direct Save Button in Header (Always Available Anytime!) */}
               <button
                 type="button"
                 onClick={handleSave}
@@ -845,30 +973,55 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
               </button>
             </div>
 
-            {/* Middle: Integrated Compact Tools Strip (Distinct Golden Capsule Scrollbar Track) */}
             <div className="bg-slate-900/95 border border-amber-400/40 px-2 py-0.5 rounded-2xl flex items-center gap-1.5 overflow-x-auto no-scrollbar shadow-inner shadow-slate-950/80 backdrop-blur-xs">
-              
-              {/* Category Dropdown */}
               <select
                 value={noteState.category}
-                onChange={e => {
-                  const cat = categoriesList.find(c => c.key === e.target.value);
-                  setNoteState(prev => ({ 
-                    ...prev, 
+                onChange={(e) => {
+                  const cat = categoriesList.find((c) => c.key === e.target.value);
+                  setNoteState((prev) => ({
+                    ...prev,
                     category: e.target.value as any,
-                    color_tag: cat ? cat.color : prev.color_tag 
+                    color_tag: cat ? cat.color : prev.color_tag,
                   }));
                 }}
                 className="h-7 bg-slate-800 text-amber-300 hover:bg-slate-700 border border-amber-500/40 rounded-xl px-2.5 py-0.5 text-[11px] font-black outline-none cursor-pointer shrink-0 transition-colors"
               >
-                {categoriesList.map(c => (
+                {categoriesList.map((c) => (
                   <option key={c.key} value={c.key} className="bg-slate-900 text-white">
                     {c.label}
                   </option>
                 ))}
               </select>
 
-              {/* Calculator Toggle Button */}
+              {/* Dedicated Customization Details Button */}
+              <button
+                type="button"
+                onClick={() => setShowCustomizationDetails(!showCustomizationDetails)}
+                className={`h-7 px-2.5 rounded-xl text-[11px] font-black flex items-center gap-1 transition-colors cursor-pointer border shrink-0 ${
+                  showCustomizationDetails
+                    ? 'bg-purple-500 text-white border-purple-400 shadow-xs'
+                    : 'bg-slate-800 text-purple-300 hover:bg-slate-700 border-purple-500/40'
+                }`}
+                title="عرض تفاصيل التخصيص الشاملة (الألوان، الخطوط، التظليل، الورقة، الإطار)"
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5" />
+                <span>تفاصيل التخصيص</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowTemplatesMenu(!showTemplatesMenu)}
+                className={`h-7 px-2.5 rounded-xl text-[11px] font-black flex items-center gap-1 transition-colors cursor-pointer border shrink-0 ${
+                  showTemplatesMenu
+                    ? 'bg-sky-500 text-slate-950 border-sky-400'
+                    : 'bg-slate-800 text-sky-300 hover:bg-slate-700 border-slate-700'
+                }`}
+                title="إدراج قالب جاهز"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>قوالب</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => setShowCalculator(!showCalculator)}
@@ -883,13 +1036,12 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
                 <span>آلة حاسبة</span>
               </button>
 
-              {/* Pin Note Button */}
               <button
                 type="button"
-                onClick={() => setNoteState(prev => ({ ...prev, is_pinned: !prev.is_pinned }))}
+                onClick={() => setNoteState((prev) => ({ ...prev, is_pinned: !prev.is_pinned }))}
                 className={`h-7 px-2.5 rounded-xl text-[11px] font-black flex items-center gap-1 transition-colors cursor-pointer border shrink-0 ${
-                  noteState.is_pinned 
-                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/50' 
+                  noteState.is_pinned
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
                     : 'bg-slate-800 text-slate-300 hover:text-slate-100 border-slate-700'
                 }`}
                 title={noteState.is_pinned ? 'مثبتة في الأعلى' : 'تثبيت الملاحظة'}
@@ -898,7 +1050,6 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
                 <span>{noteState.is_pinned ? 'مثبتة' : 'تثبيت'}</span>
               </button>
 
-              {/* Checklist Toggle */}
               <button
                 type="button"
                 onClick={() => setShowChecklistSection(!showChecklistSection)}
@@ -918,78 +1069,469 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
                 )}
               </button>
 
-              {/* FIXED TOP CALCULATED TOTAL PILL */}
-              {noteState.calculated_total > 0 && (
-                <div className="h-7 px-2.5 bg-emerald-500/20 border border-emerald-500/50 rounded-xl text-emerald-300 text-[11px] font-mono font-black flex items-center gap-1 shrink-0 shadow-2xs">
-                  <Sparkles className="w-3 h-3 text-emerald-400" />
-                  <span>{noteState.calculated_total.toLocaleString('ar-SA')} ريال</span>
-                </div>
-              )}
-
-            </div>
-
-            {/* Right: Note Status */}
-            <div className="flex items-center gap-1.5 shrink-0">
-              <span className="text-xs font-black text-amber-300 hidden md:inline">
-                {editingNoteId ? '✏️ تعديل' : '📝 تدوين وملاحظات'}
-              </span>
-              <div className="w-2 h-2 rounded-full bg-amber-400 ring-2 ring-amber-400/40"></div>
-            </div>
-
-          </div>
-
-          {/* Sub Toolbar */}
-          <div className="px-3 py-1.5 bg-slate-950 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-1.5 text-xs">
-            <div className="flex items-center gap-1.5">
-              {/* Enhanced Bold B Button */}
               <button
                 type="button"
                 onClick={() => {
-                  setIsBoldActive(!isBoldActive);
-                  handleApplyFormatting('bold');
+                  const nextAuto = !noteState.auto_sum;
+                  const currentContent = editorRef.current ? sanitizeNoteHtml(editorRef.current.innerHTML) : noteState.content;
+                  setNoteState((prev) => ({
+                    ...prev,
+                    auto_sum: nextAuto,
+                    calculated_total: nextAuto ? calculateNoteContentTotal(currentContent) : prev.calculated_total,
+                  }));
                 }}
-                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all cursor-pointer border flex items-center gap-1.5 ${
-                  isBoldActive
-                    ? 'bg-amber-500 text-slate-950 border-amber-400 font-extrabold shadow-sm'
+                className={`h-7 px-2.5 rounded-xl text-[11px] font-black flex items-center gap-1 shrink-0 border transition-colors cursor-pointer ${
+                  noteState.auto_sum
+                    ? 'bg-emerald-500/20 border-emerald-500/60 text-emerald-300'
+                    : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+                }`}
+                title={noteState.auto_sum ? 'التجميع التلقائي مفعّل (اضغط لتعطيله)' : 'التجميع التلقائي معطّل (اضغط لتفعيله)'}
+              >
+                <Sparkles className={`w-3 h-3 ${noteState.auto_sum ? 'text-emerald-400' : 'text-slate-500'}`} />
+                <span className="font-mono">
+                  {noteState.calculated_total !== 0
+                    ? `${noteState.calculated_total.toLocaleString('ar-SA')} ريال`
+                    : noteState.auto_sum
+                    ? 'تجميع تلقائي'
+                    : 'يدوي'}
+                </span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  const nextPreview = !isPreviewMode;
+                  setIsPreviewMode(nextPreview);
+                  if (!nextPreview) {
+                    syncEditorDom(noteState.content);
+                  }
+                }}
+                className={`px-2.5 py-1 rounded-xl text-[11px] font-black flex items-center gap-1 transition-colors cursor-pointer border ${
+                  isPreviewMode
+                    ? 'bg-emerald-500 text-slate-950 border-emerald-400'
+                    : 'bg-slate-800 text-slate-200 hover:bg-slate-700 border-slate-700'
+                }`}
+                title={isPreviewMode ? 'العودة إلى الكتابة والتعديل' : 'عرض القراءة النهائية'}
+              >
+                {isPreviewMode ? <Edit3 className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5 text-amber-300" />}
+                <span className="hidden md:inline">{isPreviewMode ? 'تحرير' : 'عرض نهائي'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Templates Strip */}
+          {showTemplatesMenu && (
+            <div className="px-3 py-2 bg-slate-900 border-t border-slate-800 flex items-center gap-1.5 overflow-x-auto no-scrollbar text-[11px]">
+              <span className="text-sky-300 font-black shrink-0 ml-1">قوالب سريعة:</span>
+              <button type="button" onClick={() => handleApplyTemplate('cashier_shift')} className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-emerald-600/30 border border-slate-700 text-emerald-300 font-bold shrink-0 cursor-pointer">🏦 تسليم وردية</button>
+              <button type="button" onClick={() => handleApplyTemplate('external_deal')} className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-sky-600/30 border border-slate-700 text-sky-300 font-bold shrink-0 cursor-pointer">💼 معاملة خارجية</button>
+              <button type="button" onClick={() => handleApplyTemplate('living_expenses')} className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-purple-600/30 border border-slate-700 text-purple-300 font-bold shrink-0 cursor-pointer">🏠 مصاريف معيشة</button>
+              <button type="button" onClick={() => handleApplyTemplate('todo_list')} className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-rose-600/30 border border-slate-700 text-rose-300 font-bold shrink-0 cursor-pointer">📋 قائمة مهام</button>
+              <button type="button" onClick={() => handleApplyTemplate('diary_idea')} className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-amber-600/30 border border-slate-700 text-amber-300 font-bold shrink-0 cursor-pointer">📖 يوميات وخواطر</button>
+            </div>
+          )}
+
+          {/* EXPANDED CUSTOMIZATION DETAILS PANEL ("تفاصيل التخصيص") */}
+          {showCustomizationDetails && (
+            <div className="px-3 py-2.5 bg-slate-900/98 border-t border-purple-500/40 space-y-2 text-[11px] max-h-56 overflow-y-auto no-scrollbar">
+              {/* Row 1: Direct WYSIWYG Selection Formatting (Text Color, Highlight, Inline Font Size) */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
+                {/* Text Color Swatches */}
+                <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-2 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black text-purple-300 flex items-center gap-1">
+                      <Palette className="w-3 h-3" /> لون النص المحدد (مباشر):
+                    </span>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={handleClearSelectionFormat}
+                      className="text-[9.5px] text-slate-300 hover:text-white bg-slate-700 px-1.5 py-0.5 rounded flex items-center gap-1 cursor-pointer"
+                      title="إزالة تنسيق النص المحدد"
+                    >
+                      <Eraser className="w-2.5 h-2.5" /> مسح التنسيق
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {TEXT_COLOR_SWATCHES.map((sw) => (
+                      <button
+                        key={sw.hex}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => handleApplyTextColor(sw.hex)}
+                        className={`w-5 h-5 rounded-full ${sw.dot} hover:scale-125 transition-transform cursor-pointer ring-1 ring-white/20`}
+                        title={`تلوين النص باللون ${sw.label}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Highlight Swatches */}
+                <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-2 space-y-1">
+                  <span className="text-[10px] font-black text-yellow-300 flex items-center gap-1">
+                    <Highlighter className="w-3 h-3" /> تظليل خلفية النص:
+                  </span>
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {HIGHLIGHT_SWATCHES.map((hl) => (
+                      <button
+                        key={hl.hex}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => handleApplyHighlightColor(hl.hex)}
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-black cursor-pointer border border-white/10 hover:scale-105 transition-transform ${hl.cls}`}
+                        title={`تظليل: ${hl.label}`}
+                      >
+                        {hl.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Inline Font Size for Selected Text */}
+                <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-2 space-y-1">
+                  <span className="text-[10px] font-black text-sky-300 flex items-center gap-1">
+                    <Type className="w-3 h-3" /> حجم الجزء المحدد من النص:
+                  </span>
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {INLINE_FONT_SIZES.map((sz) => (
+                      <button
+                        key={sz.cmdVal}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => handleApplyInlineFontSize(sz.cmdVal)}
+                        className="px-2 py-0.5 rounded-lg bg-slate-700 hover:bg-sky-500 hover:text-slate-950 text-slate-200 font-black text-[10px] cursor-pointer transition-colors"
+                      >
+                        {sz.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Row 2: Paper Background, Global Typography, Spacing & Border Styles */}
+              <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                {/* Paper Background (6 Styles) */}
+                <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-xl border border-slate-700 flex-wrap">
+                  <span className="text-[10px] text-amber-300 font-black px-1 flex items-center gap-1">
+                    <Rows3 className="w-3 h-3" /> الورقة:
+                  </span>
+                  {[
+                    { id: 'plain', label: 'عادي' },
+                    { id: 'lined', label: 'مسطّر' },
+                    { id: 'grid', label: 'مربعات' },
+                    { id: 'dots', label: 'منقّط' },
+                    { id: 'warm', label: 'كريمي' },
+                    { id: 'dark', label: 'ليلي' },
+                  ].map((ps) => (
+                    <button
+                      key={ps.id}
+                      type="button"
+                      onClick={() => setNoteState((prev) => ({ ...prev, paper_style: ps.id as any }))}
+                      className={`px-2 py-0.5 rounded-lg font-black transition-colors cursor-pointer text-[10px] ${
+                        noteState.paper_style === ps.id ? 'bg-amber-500 text-slate-950' : 'text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      {ps.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Font Family */}
+                <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-xl border border-slate-700">
+                  <span className="text-[10px] text-emerald-300 font-black px-1">نوع الخط:</span>
+                  {[
+                    { id: 'sans', label: 'عصري' },
+                    { id: 'mono', label: 'رقمي/حسابي' },
+                    { id: 'serif', label: 'كلاسيكي' },
+                  ].map((ff) => (
+                    <button
+                      key={ff.id}
+                      type="button"
+                      onClick={() => setNoteState((prev) => ({ ...prev, font_family: ff.id as any }))}
+                      className={`px-2 py-0.5 rounded-lg font-black transition-colors cursor-pointer text-[10px] ${
+                        noteState.font_family === ff.id ? 'bg-emerald-500 text-slate-950' : 'text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      {ff.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Global Font Size */}
+                <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-xl border border-slate-700">
+                  <span className="text-[10px] text-sky-300 font-black px-1">الحجم العام:</span>
+                  {[
+                    { id: 'sm', label: 'صغير' },
+                    { id: 'base', label: 'وسط' },
+                    { id: 'lg', label: 'كبير' },
+                    { id: 'xl', label: 'ضخم' },
+                  ].map((fs) => (
+                    <button
+                      key={fs.id}
+                      type="button"
+                      onClick={() => setNoteState((prev) => ({ ...prev, font_size: fs.id as any }))}
+                      className={`px-2 py-0.5 rounded-lg font-black transition-colors cursor-pointer text-[10px] ${
+                        noteState.font_size === fs.id ? 'bg-sky-500 text-slate-950' : 'text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      {fs.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Line Spacing */}
+                <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-xl border border-slate-700">
+                  <span className="text-[10px] text-indigo-300 font-black px-1">تباعد الأسطر:</span>
+                  {[
+                    { id: 'compact', label: 'مضغوط' },
+                    { id: 'normal', label: 'مريح' },
+                    { id: 'relaxed', label: 'واسع' },
+                  ].map((lh) => (
+                    <button
+                      key={lh.id}
+                      type="button"
+                      onClick={() => setNoteState((prev) => ({ ...prev, line_height: lh.id as any }))}
+                      className={`px-2 py-0.5 rounded-lg font-black transition-colors cursor-pointer text-[10px] ${
+                        noteState.line_height === lh.id ? 'bg-indigo-500 text-white' : 'text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      {lh.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Alignment */}
+                <div className="flex items-center gap-0.5 bg-slate-800 p-1 rounded-xl border border-slate-700">
+                  <button
+                    type="button"
+                    onClick={() => setNoteState((prev) => ({ ...prev, text_align: 'right' }))}
+                    className={`p-1 rounded-lg cursor-pointer ${noteState.text_align === 'right' ? 'bg-indigo-500 text-white' : 'text-slate-400 hover:text-white'}`}
+                    title="محاذاة لليمين"
+                  >
+                    <AlignRight className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNoteState((prev) => ({ ...prev, text_align: 'center' }))}
+                    className={`p-1 rounded-lg cursor-pointer ${noteState.text_align === 'center' ? 'bg-indigo-500 text-white' : 'text-slate-400 hover:text-white'}`}
+                    title="توسيط"
+                  >
+                    <AlignCenter className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNoteState((prev) => ({ ...prev, text_align: 'left' }))}
+                    className={`p-1 rounded-lg cursor-pointer ${noteState.text_align === 'left' ? 'bg-indigo-500 text-white' : 'text-slate-400 hover:text-white'}`}
+                    title="محاذاة لليسار"
+                  >
+                    <AlignLeft className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Border Style */}
+                <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-xl border border-slate-700">
+                  <span className="text-[10px] text-rose-300 font-black px-1">الإطار:</span>
+                  {[
+                    { id: 'gold', label: 'ذهبي' },
+                    { id: 'double', label: 'مزدوج' },
+                    { id: 'themed', label: 'ملوّن' },
+                    { id: 'subtle', label: 'هادئ' },
+                  ].map((bs) => (
+                    <button
+                      key={bs.id}
+                      type="button"
+                      onClick={() => setNoteState((prev) => ({ ...prev, border_style: bs.id as any }))}
+                      className={`px-2 py-0.5 rounded-lg font-black transition-colors cursor-pointer text-[10px] ${
+                        noteState.border_style === bs.id ? 'bg-rose-500 text-white' : 'text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      {bs.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Quick Sub-Toolbar (Instant WYSIWYG Formatting During Typing) */}
+          <div className="px-3 py-1.5 bg-slate-950 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-1.5 text-xs">
+            <div className="flex items-center gap-1 flex-wrap">
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => execWysiwygCommand('bold')}
+                className={`px-2 py-1 rounded-lg border text-xs font-black cursor-pointer flex items-center gap-1 transition-colors ${
+                  activeFormats.bold
+                    ? 'bg-amber-500 text-slate-950 border-amber-400'
                     : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border-slate-700'
                 }`}
-                title="تنسيق خط عريض واضح (**نص**)"
+                title="خط عريض (تطبيق فوري أثناء الكتابة)"
               >
                 <Bold className="w-3.5 h-3.5" />
-                <span className="font-black text-xs">خط عريض B</span>
+                <span className="hidden sm:inline">عريض</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => handleApplyFormatting('list')}
-                className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-black border border-slate-700 cursor-pointer"
-                title="إدراج نقطة تعداد"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => execWysiwygCommand('underline')}
+                className={`px-2 py-1 rounded-lg border text-xs font-black cursor-pointer flex items-center gap-1 transition-colors ${
+                  activeFormats.underline
+                    ? 'bg-sky-500 text-slate-950 border-sky-400'
+                    : 'bg-slate-800 hover:bg-slate-700 text-sky-300 border-slate-700'
+                }`}
+                title="تسطير تحت النص (تطبيق فوري أثناء الكتابة)"
+              >
+                <Underline className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">تسطير</span>
+              </button>
+
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => execWysiwygCommand('italic')}
+                className={`p-1.5 rounded-lg border cursor-pointer transition-colors ${
+                  activeFormats.italic
+                    ? 'bg-slate-200 text-slate-950 border-white'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+                }`}
+                title="خط مائل"
+              >
+                <Italic className="w-3.5 h-3.5" />
+              </button>
+
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => execWysiwygCommand('strikeThrough')}
+                className={`p-1.5 rounded-lg border cursor-pointer transition-colors ${
+                  activeFormats.strikeThrough
+                    ? 'bg-rose-500 text-white border-rose-400'
+                    : 'bg-slate-800 hover:bg-slate-700 text-rose-300 border-slate-700'
+                }`}
+                title="شطب النص"
+              >
+                <Strikethrough className="w-3.5 h-3.5" />
+              </button>
+
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => handleApplyHighlightColor('#fef08a')}
+                className="px-2 py-1 rounded-lg bg-yellow-400/20 hover:bg-yellow-400/30 text-yellow-200 border border-yellow-400/40 text-[11px] font-black cursor-pointer flex items-center gap-1"
+                title="تظليل فسفوري مباشر"
+              >
+                <Highlighter className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">تظليل</span>
+              </button>
+
+              {/* Quick Inline Color Dots right on the bar */}
+              <div className="flex items-center gap-1 bg-slate-800/90 px-1.5 py-1 rounded-lg border border-slate-700">
+                {[
+                  { hex: '#dc2626', cls: 'bg-red-500', label: 'أحمر' },
+                  { hex: '#059669', cls: 'bg-emerald-500', label: 'أخضر' },
+                  { hex: '#2563eb', cls: 'bg-blue-500', label: 'أزرق' },
+                  { hex: '#d97706', cls: 'bg-amber-500', label: 'ذهبي' },
+                  { hex: '#0f172a', cls: 'bg-slate-900 ring-1 ring-slate-500', label: 'أسود' },
+                ].map((dot) => (
+                  <button
+                    key={dot.hex}
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => handleApplyTextColor(dot.hex)}
+                    className={`w-3.5 h-3.5 rounded-full ${dot.cls} hover:scale-125 transition-transform cursor-pointer`}
+                    title={`لون خط ${dot.label}`}
+                  />
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={handleToggleHeading}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 cursor-pointer"
+                title="عنوان فرعي بارز"
+              >
+                <Heading1 className="w-3.5 h-3.5" />
+              </button>
+
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => execWysiwygCommand('insertUnorderedList')}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+                title="قائمة نقطية"
               >
                 <List className="w-3.5 h-3.5" />
               </button>
+
               <button
                 type="button"
-                onClick={() => handleApplyFormatting('divider')}
-                className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-black border border-slate-700 cursor-pointer"
-                title="إدراج فاصل خطي"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => execWysiwygCommand('insertOrderedList')}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+                title="قائمة مرقمة"
+              >
+                <ListOrdered className="w-3.5 h-3.5" />
+              </button>
+
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={handleToggleQuote}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 cursor-pointer"
+                title="صندوق اقتباس / ملاحظة مميزة"
+              >
+                <Quote className="w-3.5 h-3.5" />
+              </button>
+
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={handleInsertDivider}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+                title="إدراج خط فاصل"
               >
                 <Divide className="w-3.5 h-3.5" />
               </button>
+
               <button
                 type="button"
-                onClick={() => handleApplyFormatting('highlight')}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={handleInsertPinBadge}
                 className="px-2 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[11px] font-black border border-amber-500/30 cursor-pointer"
                 title="إدراج شارة تنبيه"
               >
-                🟡 تنبيه
+                📌 شارة
               </button>
 
-              {/* Character Counter directly next to Alert button */}
-              <div 
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={handleInsertDateTime}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 cursor-pointer"
+                title="إدراج التاريخ والوقت"
+              >
+                <Calendar className="w-3.5 h-3.5" />
+              </button>
+
+              <button
+                type="button"
+                onClick={handleAutoSumContentNumbers}
+                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black border border-emerald-400/50 cursor-pointer flex items-center gap-1 shadow-xs"
+                title="حساب العمليات الحسابية داخل السطور وإدراج/تحديث الإجمالي الكلي"
+              >
+                <Equal className="w-3.5 h-3.5" />
+                <span>احسب واجمع</span>
+              </button>
+
+              <div
                 className="px-2 py-1 rounded-lg bg-slate-800 text-amber-300 text-[11px] font-black border border-slate-700 flex items-center gap-1 select-none"
                 title="عدد الأحرف المكتوبة"
               >
-                <span>{noteState.content.length}</span>
+                <span>{plainTextLength}</span>
                 <span>حرف</span>
               </div>
             </div>
@@ -997,7 +1539,7 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
             <div className="flex items-center gap-2">
               <select
                 value={noteState.priority}
-                onChange={e => setNoteState(prev => ({ ...prev, priority: e.target.value as any }))}
+                onChange={(e) => setNoteState((prev) => ({ ...prev, priority: e.target.value as any }))}
                 className="bg-slate-800 text-slate-200 border border-slate-700 rounded-lg px-2 py-0.5 text-[11px] font-bold outline-none cursor-pointer"
               >
                 <option value="normal">🟢 عادية</option>
@@ -1007,11 +1549,11 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
               </select>
 
               <div className="flex items-center gap-1 bg-slate-800 px-1.5 py-1 rounded-lg border border-slate-700">
-                {colorPalette.map(color => (
+                {colorPalette.map((color) => (
                   <button
                     key={color.id}
                     type="button"
-                    onClick={() => setNoteState(prev => ({ ...prev, color_tag: color.id }))}
+                    onClick={() => setNoteState((prev) => ({ ...prev, color_tag: color.id }))}
                     className={`w-3.5 h-3.5 rounded-full ${color.bg} transition-transform cursor-pointer ${
                       noteState.color_tag === color.id ? 'ring-2 ring-amber-400 scale-125' : 'opacity-60 hover:opacity-100'
                     }`}
@@ -1025,7 +1567,7 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
                 <input
                   type="date"
                   value={noteState.reminder_date}
-                  onChange={e => setNoteState(prev => ({ ...prev, reminder_date: e.target.value }))}
+                  onChange={(e) => setNoteState((prev) => ({ ...prev, reminder_date: e.target.value }))}
                   className="bg-transparent text-slate-200 text-[10px] font-bold outline-none cursor-pointer"
                   title="تاريخ التذكير"
                 />
@@ -1034,18 +1576,12 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
           </div>
         </div>
 
-        {/* VERTICAL SPLIT-VIEW: TOP (COMPACT SLIM CALCULATOR) & BOTTOM (FIXED-SIZE GOLDEN WRITING CANVAS) */}
+        {/* VERTICAL SPLIT-VIEW: CALCULATOR + WYSIWYG WRITING CANVAS */}
         <div className="flex-1 flex flex-col min-h-0 bg-slate-100/80 p-3 sm:p-5 overflow-y-auto no-scrollbar relative space-y-3.5">
-          
-          {/* TOP SECTION: DOCKED COMPACT CALCULATOR (Scientific Digital Screen & Formula) */}
           {showCalculator && (
             <div className="bg-slate-900 border-2 border-amber-400/80 rounded-2xl shrink-0 select-none overflow-hidden shadow-md my-1 p-1.5 sm:p-2.5 space-y-1">
               <div className="space-y-1">
-                
-                {/* Scientific LCD Display & Control Bar */}
                 <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-1.5 bg-slate-950 p-1 px-2.5 rounded-xl border border-slate-800">
-                  
-                  {/* Left: Compact Mode Tabs, Copy & Insert Buttons */}
                   <div className="flex items-center gap-1 flex-wrap">
                     <div className="flex items-center gap-0.5 bg-slate-900 p-0.5 rounded-lg border border-slate-800">
                       <button
@@ -1089,7 +1625,6 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
                     </button>
                   </div>
 
-                  {/* Right: Gorgeous Glowing Scientific LCD Screen */}
                   <div className="w-full sm:w-64 text-right px-3 py-1 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 rounded-xl border-2 border-emerald-500/40 shadow-inner shadow-emerald-950/50 select-none">
                     <div className="flex items-center justify-between text-[10px] text-amber-300/90 font-mono leading-none pb-0.5 mb-0.5 border-b border-slate-800/80">
                       <span className="text-[9px] text-amber-400 font-bold">{calcMemory !== 0 ? `[M = ${calcMemory.toLocaleString('ar-SA')}]` : ''}</span>
@@ -1097,134 +1632,134 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
                         {getLiveEquationDisplay()}
                       </span>
                     </div>
-                    <div className="font-mono text-base sm:text-lg font-black text-emerald-400 dir-ltr text-right tracking-tight truncate leading-tight drop-shadow-[0_0_6px_rgba(52,211,153,0.35)]">
+                    <div className="font-mono text-base sm:text-lg font-black text-emerald-400 dir-ltr text-right tracking-tight truncate leading-tight">
                       {calcDisplay}
                     </div>
                   </div>
-
                 </div>
 
-                {/* Keypad Row: Functions on Right + 4-Col Standard Numpad on Left (LTR) */}
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-1 items-center">
-                  
-                  {/* Functions, Memory & Specialized Modes (col-span-7) */}
                   <div className="md:col-span-7 space-y-0.5">
-                    {/* Memory & Clear strip */}
                     <div className="grid grid-cols-8 gap-0.5 text-center text-[9px] sm:text-[10px] font-bold">
-                      <button type="button" onClick={handleCalcMemoryClear} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 transition-colors cursor-pointer" title="مسح الذاكرة">MC</button>
-                      <button type="button" onClick={handleCalcMemoryRecall} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 transition-colors cursor-pointer" title="استرجاع الذاكرة">MR</button>
-                      <button type="button" onClick={handleCalcMemoryAdd} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 transition-colors cursor-pointer" title="إضافة للذاكرة">M+</button>
-                      <button type="button" onClick={handleCalcMemorySub} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 transition-colors cursor-pointer" title="طرح من الذاكرة">M-</button>
-                      <button type="button" onClick={handleCalcAllClear} className="py-0.5 rounded bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800/60 font-black transition-colors cursor-pointer" title="مسح شامل">AC</button>
-                      <button type="button" onClick={handleCalcClearEntry} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-rose-300 border border-slate-700 font-black transition-colors cursor-pointer" title="مسح الإدخال">C</button>
-                      <button type="button" onClick={handleCalcBackspace} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors cursor-pointer font-bold" title="حذف خانة">⌫</button>
-                      <button type="button" onClick={handleCalcToggleSign} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors cursor-pointer font-bold" title="عكس الإشارة">±</button>
+                      <button type="button" onClick={handleCalcMemoryClear} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 cursor-pointer">MC</button>
+                      <button type="button" onClick={handleCalcMemoryRecall} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 cursor-pointer">MR</button>
+                      <button type="button" onClick={handleCalcMemoryAdd} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 cursor-pointer">M+</button>
+                      <button type="button" onClick={handleCalcMemorySub} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 cursor-pointer">M-</button>
+                      <button type="button" onClick={handleCalcAllClear} className="py-0.5 rounded bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800/60 font-black cursor-pointer">AC</button>
+                      <button type="button" onClick={handleCalcClearEntry} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-rose-300 border border-slate-700 font-black cursor-pointer">C</button>
+                      <button type="button" onClick={handleCalcBackspace} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer font-bold">⌫</button>
+                      <button type="button" onClick={handleCalcToggleSign} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer font-bold">±</button>
                     </div>
 
-                    {/* Specialized Accounting Strip with Tax, Parentheses, and Fractions a/b */}
                     {calcMode === 'accounting' ? (
                       <div className="grid grid-cols-8 gap-0.5 text-center text-[9px] sm:text-[10px] font-black">
-                        <button type="button" onClick={handleCalcAddTax15} className="py-0.5 rounded bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 transition-colors cursor-pointer" title="+15% ضريبة">+15%</button>
-                        <button type="button" onClick={handleCalcRemoveTax15} className="py-0.5 rounded bg-sky-950/80 hover:bg-sky-900 text-sky-300 border border-sky-700/60 transition-colors cursor-pointer" title="-15% ضريبة">-15%</button>
-                        <button type="button" onClick={handleCalcTaxOnly15} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 transition-colors cursor-pointer" title="قيمة الضريبة فقط">الضريبة</button>
-                        <button type="button" onClick={handleCalcPercentage} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 transition-colors cursor-pointer font-bold" title="نسبة مئوية">%</button>
-                        <button type="button" onClick={handleCalcOpenParen} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 transition-colors cursor-pointer font-black text-xs" title="قوس فتح">(</button>
-                        <button type="button" onClick={handleCalcCloseParen} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 transition-colors cursor-pointer font-black text-xs" title="قوس إغلاق">)</button>
-                        <button type="button" onClick={handleCalcToFraction} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-amber-300 border border-indigo-700/60 transition-colors cursor-pointer font-black text-[10px]" title="بسط ومقام (كسر a/b)">a/b</button>
-                        <button type="button" onClick={() => handleCalcNumber('00')} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 transition-colors cursor-pointer font-bold" title="صفران">00</button>
+                        <button type="button" onClick={handleCalcAddTax15} className="py-0.5 rounded bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 cursor-pointer">+15%</button>
+                        <button type="button" onClick={handleCalcRemoveTax15} className="py-0.5 rounded bg-sky-950/80 hover:bg-sky-900 text-sky-300 border border-sky-700/60 cursor-pointer">-15%</button>
+                        <button type="button" onClick={handleCalcTaxOnly15} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 cursor-pointer">الضريبة</button>
+                        <button type="button" onClick={handleCalcPercentage} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 cursor-pointer font-bold">%</button>
+                        <button type="button" onClick={handleCalcOpenParen} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 cursor-pointer font-black text-xs">(</button>
+                        <button type="button" onClick={handleCalcCloseParen} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 cursor-pointer font-black text-xs">)</button>
+                        <button type="button" onClick={handleCalcToFraction} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-amber-300 border border-indigo-700/60 cursor-pointer font-black text-[10px]">a/b</button>
+                        <button type="button" onClick={() => handleCalcNumber('00')} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 cursor-pointer font-bold">00</button>
                       </div>
                     ) : (
-                      /* Advanced Scientific Functions with MathJS */
                       <div className="space-y-0.5">
-                        {/* Row 1: Sqrt, Power, Logs, Constants, Fraction */}
                         <div className="grid grid-cols-6 gap-0.5 text-center text-[9px] sm:text-[10px] font-black">
-                          <button type="button" onClick={handleCalcSqrt} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 transition-colors cursor-pointer font-bold" title="جذر تربيعي">√x</button>
-                          <button type="button" onClick={handleCalcPowerY} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-amber-300 border border-indigo-700/60 transition-colors cursor-pointer font-bold" title="قوة وأس x^y">xʸ</button>
-                          <button type="button" onClick={handleCalcSquare} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 transition-colors cursor-pointer font-bold" title="تربيع x²">x²</button>
-                          <button type="button" onClick={handleCalcLn} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 transition-colors cursor-pointer font-bold" title="اللوغاريتم الطبيعي">ln</button>
-                          <button type="button" onClick={handleCalcLog10} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 transition-colors cursor-pointer font-bold" title="اللوغاريتم العشري">log₁₀</button>
-                          <button type="button" onClick={handleCalcToFraction} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-amber-300 border border-indigo-700/60 transition-colors cursor-pointer font-bold" title="بسط ومقام (كسور a/b)">a/b</button>
+                          <button type="button" onClick={handleCalcSqrt} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 cursor-pointer font-bold">√x</button>
+                          <button type="button" onClick={handleCalcPowerY} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-amber-300 border border-indigo-700/60 cursor-pointer font-bold">xʸ</button>
+                          <button type="button" onClick={handleCalcSquare} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 cursor-pointer font-bold">x²</button>
+                          <button type="button" onClick={handleCalcLn} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 cursor-pointer font-bold">ln</button>
+                          <button type="button" onClick={handleCalcLog10} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 cursor-pointer font-bold">log₁₀</button>
+                          <button type="button" onClick={handleCalcToFraction} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-amber-300 border border-indigo-700/60 cursor-pointer font-bold">a/b</button>
                         </div>
-                        {/* Row 2: Cube Root, Exp, Trigonometry, Factorial */}
                         <div className="grid grid-cols-6 gap-0.5 text-center text-[9px] sm:text-[10px] font-black">
-                          <button type="button" onClick={handleCalcCbrt} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 transition-colors cursor-pointer font-bold" title="جذر تكعيبي">∛x</button>
-                          <button type="button" onClick={handleCalcExp10} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 transition-colors cursor-pointer font-bold" title="10^x">10ˣ</button>
-                          <button type="button" onClick={handleCalcExpE} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 transition-colors cursor-pointer font-bold" title="e^x">eˣ</button>
-                          <button type="button" onClick={handleCalcSin} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 transition-colors cursor-pointer font-bold" title="جيب sin">sin</button>
-                          <button type="button" onClick={handleCalcCos} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 transition-colors cursor-pointer font-bold" title="جيب تمام cos">cos</button>
-                          <button type="button" onClick={handleCalcTan} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 transition-colors cursor-pointer font-bold" title="ظل tan">tan</button>
+                          <button type="button" onClick={handleCalcCbrt} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 cursor-pointer font-bold">∛x</button>
+                          <button type="button" onClick={handleCalcExp10} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 cursor-pointer font-bold">10ˣ</button>
+                          <button type="button" onClick={handleCalcExpE} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 cursor-pointer font-bold">eˣ</button>
+                          <button type="button" onClick={handleCalcSin} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 cursor-pointer font-bold">sin</button>
+                          <button type="button" onClick={handleCalcCos} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 cursor-pointer font-bold">cos</button>
+                          <button type="button" onClick={handleCalcTan} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 cursor-pointer font-bold">tan</button>
                         </div>
-                        {/* Row 3: Factorial, Abs, Brackets, Reciprocal */}
                         <div className="grid grid-cols-6 gap-0.5 text-center text-[9px] sm:text-[10px] font-black">
-                          <button type="button" onClick={handleCalcFactorial} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-emerald-300 border border-indigo-700/60 transition-colors cursor-pointer font-bold" title="مضروب n!">n!</button>
-                          <button type="button" onClick={handleCalcAbs} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 transition-colors cursor-pointer font-bold" title="قيمة مطلقة |x|">|x|</button>
-                          <button type="button" onClick={handleCalcReciprocal} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 transition-colors cursor-pointer font-bold" title="مقلوب 1/x">1/x</button>
-                          <button type="button" onClick={() => handleCalcNumber(`${Math.E}`)} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 transition-colors cursor-pointer font-bold" title="ثابت أويلر e">e</button>
-                          <button type="button" onClick={handleCalcOpenParen} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 transition-colors cursor-pointer font-black text-xs" title="قوس فتح">(</button>
-                          <button type="button" onClick={handleCalcCloseParen} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 transition-colors cursor-pointer font-black text-xs" title="قوس إغلاق">)</button>
+                          <button type="button" onClick={handleCalcFactorial} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-emerald-300 border border-indigo-700/60 cursor-pointer font-bold">n!</button>
+                          <button type="button" onClick={handleCalcAbs} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 cursor-pointer font-bold">|x|</button>
+                          <button type="button" onClick={handleCalcReciprocal} className="py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 cursor-pointer font-bold">1/x</button>
+                          <button type="button" onClick={() => handleCalcNumber(`${Math.E}`)} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 cursor-pointer font-bold">e</button>
+                          <button type="button" onClick={handleCalcOpenParen} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 cursor-pointer font-black text-xs">(</button>
+                          <button type="button" onClick={handleCalcCloseParen} className="py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 cursor-pointer font-black text-xs">)</button>
                         </div>
                       </div>
                     )}
                   </div>
 
-                  {/* Official Standard 4-Column Numpad (col-span-5) */}
                   <div className="md:col-span-5 grid grid-cols-4 gap-0.5 text-center font-bold text-xs" dir="ltr">
-                    {/* Row 1: 7, 8, 9, ÷ */}
-                    <button type="button" onClick={() => handleCalcNumber('7')} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 transition-colors cursor-pointer font-black text-sm">7</button>
-                    <button type="button" onClick={() => handleCalcNumber('8')} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 transition-colors cursor-pointer font-black text-sm">8</button>
-                    <button type="button" onClick={() => handleCalcNumber('9')} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 transition-colors cursor-pointer font-black text-sm">9</button>
-                    <button type="button" onClick={() => handleCalcOp('÷')} className="py-1 sm:py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-amber-400 border border-slate-600 transition-colors cursor-pointer font-black text-base">÷</button>
+                    <button type="button" onClick={() => handleCalcNumber('7')} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 cursor-pointer font-black text-sm">7</button>
+                    <button type="button" onClick={() => handleCalcNumber('8')} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 cursor-pointer font-black text-sm">8</button>
+                    <button type="button" onClick={() => handleCalcNumber('9')} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 cursor-pointer font-black text-sm">9</button>
+                    <button type="button" onClick={() => handleCalcOp('÷')} className="py-1 sm:py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-amber-400 border border-slate-600 cursor-pointer font-black text-base">÷</button>
 
-                    {/* Row 2: 4, 5, 6, × */}
-                    <button type="button" onClick={() => handleCalcNumber('4')} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 transition-colors cursor-pointer font-black text-sm">4</button>
-                    <button type="button" onClick={() => handleCalcNumber('5')} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 transition-colors cursor-pointer font-black text-sm">5</button>
-                    <button type="button" onClick={() => handleCalcNumber('6')} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 transition-colors cursor-pointer font-black text-sm">6</button>
-                    <button type="button" onClick={() => handleCalcOp('×')} className="py-1 sm:py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-amber-400 border border-slate-600 transition-colors cursor-pointer font-black text-base">×</button>
+                    <button type="button" onClick={() => handleCalcNumber('4')} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 cursor-pointer font-black text-sm">4</button>
+                    <button type="button" onClick={() => handleCalcNumber('5')} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 cursor-pointer font-black text-sm">5</button>
+                    <button type="button" onClick={() => handleCalcNumber('6')} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 cursor-pointer font-black text-sm">6</button>
+                    <button type="button" onClick={() => handleCalcOp('×')} className="py-1 sm:py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-amber-400 border border-slate-600 cursor-pointer font-black text-base">×</button>
 
-                    {/* Row 3: 1, 2, 3, - */}
-                    <button type="button" onClick={() => handleCalcNumber('1')} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 transition-colors cursor-pointer font-black text-sm">1</button>
-                    <button type="button" onClick={() => handleCalcNumber('2')} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 transition-colors cursor-pointer font-black text-sm">2</button>
-                    <button type="button" onClick={() => handleCalcNumber('3')} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 transition-colors cursor-pointer font-black text-sm">3</button>
-                    <button type="button" onClick={() => handleCalcOp('-')} className="py-1 sm:py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-amber-400 border border-slate-600 transition-colors cursor-pointer font-black text-base">-</button>
+                    <button type="button" onClick={() => handleCalcNumber('1')} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 cursor-pointer font-black text-sm">1</button>
+                    <button type="button" onClick={() => handleCalcNumber('2')} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 cursor-pointer font-black text-sm">2</button>
+                    <button type="button" onClick={() => handleCalcNumber('3')} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 cursor-pointer font-black text-sm">3</button>
+                    <button type="button" onClick={() => handleCalcOp('-')} className="py-1 sm:py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-amber-400 border border-slate-600 cursor-pointer font-black text-base">-</button>
 
-                    {/* Row 4: 0, ., =, + */}
-                    <button type="button" onClick={() => handleCalcNumber('0')} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 transition-colors cursor-pointer font-black text-sm">0</button>
-                    <button type="button" onClick={handleCalcDecimal} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 transition-colors cursor-pointer font-black text-sm">.</button>
-                    <button type="button" onClick={handleCalcEquals} className="py-1 sm:py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-500 transition-colors cursor-pointer font-black text-base shadow-xs">=</button>
-                    <button type="button" onClick={() => handleCalcOp('+')} className="py-1 sm:py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-amber-400 border border-slate-600 transition-colors cursor-pointer font-black text-base">+</button>
+                    <button type="button" onClick={() => handleCalcNumber('0')} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 cursor-pointer font-black text-sm">0</button>
+                    <button type="button" onClick={handleCalcDecimal} className="py-1 sm:py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 cursor-pointer font-black text-sm">.</button>
+                    <button type="button" onClick={handleCalcEquals} className="py-1 sm:py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-500 cursor-pointer font-black text-base shadow-xs">=</button>
+                    <button type="button" onClick={() => handleCalcOp('+')} className="py-1 sm:py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-amber-400 border border-slate-600 cursor-pointer font-black text-base">+</button>
                   </div>
-
                 </div>
-
               </div>
             </div>
           )}
 
-          {/* BOTTOM SECTION: MAIN NOTE WRITING CANVAS (Rock-Solid Fixed Size & Gorgeous Golden Frame) */}
+          {/* BOTTOM SECTION: MAIN WYSIWYG NOTE WRITING CANVAS */}
           <div className="flex-1 flex flex-col min-h-0 space-y-3">
-            
-            {/* Note Title Input with Golden Border (Fixed Size & Styling) */}
-            <div className="bg-white rounded-2xl border-2 border-amber-400/90 p-2.5 sm:px-4 shadow-sm focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-400/30 shrink-0 transition-all">
+            {/* Note Title Input */}
+            <div className={`bg-white rounded-2xl ${activeCanvasBorder} p-2.5 sm:px-4 focus-within:ring-2 focus-within:ring-amber-400/30 shrink-0 transition-all`}>
               <input
                 type="text"
                 value={noteState.title}
-                onChange={e => setNoteState(prev => ({ ...prev, title: e.target.value }))}
+                onChange={(e) => setNoteState((prev) => ({ ...prev, title: e.target.value }))}
                 placeholder="عنوان الملاحظة أو اسم الحساب / اليومية..."
                 className="w-full text-sm sm:text-base font-black text-slate-800 outline-none placeholder:text-slate-400 bg-transparent text-right"
               />
             </div>
 
-            {/* Large Stable Note Content Textarea with Golden Border (100% Fixed & Guaranteed Spacious Size) */}
-            <div className="flex-1 min-h-[280px] sm:min-h-[340px] bg-white rounded-3xl border-2 border-amber-400/90 shadow-md shadow-amber-500/5 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-400/30 overflow-hidden flex flex-col transition-all">
-              <textarea
-                ref={contentTextareaRef}
-                value={noteState.content}
-                onChange={e => setNoteState(prev => ({ ...prev, content: e.target.value }))}
-                placeholder="اكتب تفاصيل اليومية، الحسابات، الأرقام، المذكرات أو التنبيهات بكل حرية وسلاسة..."
-                className={`w-full h-full p-4 sm:p-5 text-sm sm:text-base text-slate-900 outline-none leading-relaxed resize-none bg-transparent text-right overflow-y-auto placeholder:text-slate-400 placeholder:font-normal ${
-                  isBoldActive ? 'font-black tracking-wide' : 'font-bold'
-                }`}
-              />
+            {/* True WYSIWYG Rich Content Canvas (No raw symbols while typing!) */}
+            <div
+              className={`relative flex-1 min-h-[280px] sm:min-h-[340px] ${activePaperClass} rounded-3xl ${activeCanvasBorder} focus-within:ring-2 focus-within:ring-amber-400/30 overflow-hidden flex flex-col transition-all`}
+            >
+              {isPreviewMode ? (
+                <div
+                  className={`w-full h-full p-4 sm:p-6 ${activeFontClass} ${activeFamilyClass} ${activeLineHeightClass} ${activeAlignClass} break-words font-medium overflow-y-auto`}
+                >
+                  {renderFormattedNoteText(noteState.content)}
+                </div>
+              ) : (
+                <>
+                  {plainTextLength === 0 && (
+                    <div className="absolute inset-x-5 top-4 text-slate-400 pointer-events-none select-none text-sm font-medium">
+                      اكتب التفاصيل، المبالغ أو العمليات الحسابية (مثل: 500 + 300 أو 4 * 150) وسيظهر التلوين والتسطير والتنسيق مباشرة بدون رموز...
+                    </div>
+                  )}
+                  <div
+                    ref={editorRef}
+                    contentEditable
+                    suppressContentEditableWarning
+                    onInput={() => handleEditorInput()}
+                    onKeyUp={refreshActiveFormats}
+                    onMouseUp={refreshActiveFormats}
+                    dir="rtl"
+                    className={`w-full h-full p-4 sm:p-5 ${activeFontClass} ${activeFamilyClass} ${activeLineHeightClass} ${activeAlignClass} outline-none overflow-y-auto break-words font-semibold [&_h1]:text-xl [&_h1]:font-black [&_h2]:text-base [&_h2]:sm:text-lg [&_h2]:font-black [&_h2]:border-b [&_h2]:border-amber-300/70 [&_h2]:pb-0.5 [&_h2]:mb-1 [&_h3]:text-sm [&_h3]:sm:text-base [&_h3]:font-black [&_ul]:list-disc [&_ul]:pr-6 [&_ul]:my-1 [&_ol]:list-decimal [&_ol]:pr-6 [&_ol]:my-1 [&_blockquote]:border-r-4 [&_blockquote]:border-amber-500 [&_blockquote]:bg-amber-500/10 [&_blockquote]:px-3 [&_blockquote]:py-1 [&_blockquote]:my-1.5 [&_blockquote]:rounded-l-xl [&_hr]:my-2.5 [&_hr]:border-amber-300/80 [&_u]:underline [&_u]:decoration-2 [&_u]:decoration-amber-500 [&_u]:underline-offset-4 [&_s]:line-through [&_del]:line-through [&_b]:font-black [&_strong]:font-black`}
+                  />
+                </>
+              )}
             </div>
 
             {/* Collapsible Checklist Section */}
@@ -1240,14 +1775,15 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
                   </button>
                   <span className="text-xs font-black text-slate-800 flex items-center gap-1">
                     <CheckSquare className="w-3.5 h-3.5 text-indigo-600" />
-                    <span>قائمة مهام ({noteState.checklist.filter(c => c.done).length}/{noteState.checklist.length}):</span>
+                    <span>
+                      قائمة مهام ({noteState.checklist.filter((c) => c.done).length}/{noteState.checklist.length}):
+                    </span>
                   </span>
                 </div>
 
-                {/* Items */}
                 <div className="space-y-1">
-                  {noteState.checklist.map(item => (
-                    <div 
+                  {noteState.checklist.map((item) => (
+                    <div
                       key={item.id}
                       className="flex items-center justify-between p-1 px-2 rounded-lg bg-slate-50 border border-slate-100 text-xs"
                     >
@@ -1259,7 +1795,7 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
                         <Trash2 className="w-3 h-3" />
                       </button>
 
-                      <div 
+                      <div
                         onClick={() => handleToggleCheckItem(item.id)}
                         className="flex items-center gap-2 cursor-pointer select-none flex-1 justify-end"
                       >
@@ -1276,7 +1812,6 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
                   ))}
                 </div>
 
-                {/* Add item */}
                 <div className="flex items-center gap-1.5 pt-0.5">
                   <button
                     type="button"
@@ -1289,19 +1824,21 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
                   <input
                     type="text"
                     value={newChecklistText}
-                    onChange={e => setNewChecklistText(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddChecklistItem(); } }}
+                    onChange={(e) => setNewChecklistText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddChecklistItem();
+                      }
+                    }}
                     placeholder="أضف مهمة للشطب (اضغط Enter)..."
                     className="w-full p-1 px-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-800 outline-none focus:border-indigo-500"
                   />
                 </div>
               </div>
             )}
-
           </div>
-
         </div>
-
       </div>
     </div>
   );

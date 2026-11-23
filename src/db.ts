@@ -126,6 +126,13 @@ export interface Note {
   calculated_total?: number; // total calculated from numbers in note or calculator
   checklist?: NoteChecklistItem[];
   is_pinned?: boolean;
+  paper_style?: 'plain' | 'lined' | 'grid' | 'dots' | 'warm' | 'dark';
+  font_size?: 'sm' | 'base' | 'lg' | 'xl';
+  text_align?: 'right' | 'center' | 'left';
+  font_family?: 'sans' | 'mono' | 'serif';
+  line_height?: 'compact' | 'normal' | 'relaxed';
+  border_style?: 'gold' | 'themed' | 'double' | 'subtle';
+  auto_sum?: boolean;
 }
 
 export interface SalesSettlement {

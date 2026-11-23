@@ -7,6 +7,18 @@ import {
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { db } from '../../db';
+import {
+  renderFormattedNoteText,
+  stripFormattingForPreview,
+  htmlToPlainText,
+  NOTE_PAPER_CLASSES,
+  NOTE_FONT_SIZE_CLASSES,
+  NOTE_FONT_FAMILY_CLASSES,
+  NOTE_LINE_HEIGHT_CLASSES,
+  getNoteBorderClass,
+} from '../../utils/noteFormatting';
+
+export { renderFormattedNoteText };
 
 export interface NoteDetailsModalProps {
   selectedNote: any;
@@ -18,30 +30,6 @@ export interface NoteDetailsModalProps {
   handleDeleteNote: (id: number) => void;
   formatPrice?: (price: number) => string;
 }
-
-export const renderFormattedNoteText = (text: string) => {
-  if (!text) return <span className="italic text-slate-400">لا توجد تفاصيل إضافية مكتوبة...</span>;
-  const parts = text.split(/(\*\*[^*]+\*\*|📌\s*\[[^\]]+\]|----------------------------------------)/g);
-  return parts.map((part, i) => {
-    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
-      const inner = part.slice(2, -2);
-      return <strong key={i} className="font-extrabold text-slate-950 bg-amber-100/80 px-1.5 py-0.5 rounded border border-amber-300/60 shadow-2xs my-0.5 inline-block">{inner}</strong>;
-    }
-    if (part.startsWith('📌') && part.includes('[') && part.endsWith(']')) {
-      const inner = part.replace(/^📌\s*\[/, '').replace(/\]$/, '');
-      return (
-        <span key={i} className="inline-flex items-center gap-1 bg-amber-500/15 text-amber-950 font-extrabold px-2 py-0.5 rounded-xl border border-amber-400/60 my-1 shadow-2xs">
-          <span className="text-amber-600">📌</span>
-          <span>{inner}</span>
-        </span>
-      );
-    }
-    if (part === '----------------------------------------') {
-      return <hr key={i} className="my-2.5 border-amber-300/80" />;
-    }
-    return <span key={i}>{part}</span>;
-  });
-};
 
 export const NoteDetailsModal: React.FC<NoteDetailsModalProps> = ({
   selectedNote,
@@ -72,7 +60,7 @@ export const NoteDetailsModal: React.FC<NoteDetailsModalProps> = ({
   };
 
   const handleCopy = () => {
-    handleCopyNoteContent(selectedNote.content || '');
+    handleCopyNoteContent(htmlToPlainText(selectedNote.content || ''));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -81,7 +69,7 @@ export const NoteDetailsModal: React.FC<NoteDetailsModalProps> = ({
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
     const title = selectedNote.title || 'ملاحظة يومية';
-    const content = selectedNote.content || '';
+    const content = stripFormattingForPreview(selectedNote.content || '');
     const date = formatDateWithDay(selectedNote.created_at);
     const total = selectedNote.calculated_total ? `الإجمالي المحسوب: ${selectedNote.calculated_total.toLocaleString('ar-SA')} ريال` : '';
 
@@ -254,8 +242,25 @@ export const NoteDetailsModal: React.FC<NoteDetailsModalProps> = ({
             </div>
           )}
 
-          {/* Full Note Text Canvas with Golden Border */}
-          <div className="flex-1 min-h-[250px] bg-white p-4 sm:p-6 rounded-3xl border-2 border-amber-400/90 leading-relaxed text-slate-800 text-xs sm:text-sm md:text-base whitespace-pre-wrap break-words font-medium shadow-sm overflow-y-auto">
+          {/* Full Note Text Canvas with Applied Customization & Paper/Font/Border Style */}
+          <div
+            dir={selectedNote.text_align === 'left' ? 'ltr' : 'rtl'}
+            className={`flex-1 min-h-[250px] ${
+              NOTE_PAPER_CLASSES[selectedNote.paper_style || 'plain'] || NOTE_PAPER_CLASSES.plain
+            } p-4 sm:p-6 rounded-3xl ${getNoteBorderClass(selectedNote.border_style, selectedNote.color_tag)} ${
+              NOTE_FONT_SIZE_CLASSES[selectedNote.font_size || 'base'] || NOTE_FONT_SIZE_CLASSES.base
+            } ${
+              NOTE_FONT_FAMILY_CLASSES[selectedNote.font_family || 'sans'] || NOTE_FONT_FAMILY_CLASSES.sans
+            } ${
+              NOTE_LINE_HEIGHT_CLASSES[selectedNote.line_height || 'normal'] || NOTE_LINE_HEIGHT_CLASSES.normal
+            } ${
+              selectedNote.text_align === 'center'
+                ? 'text-center'
+                : selectedNote.text_align === 'left'
+                  ? 'text-left'
+                  : 'text-right'
+            } whitespace-pre-wrap break-words font-medium overflow-y-auto`}
+          >
             {renderFormattedNoteText(selectedNote.content)}
           </div>
 

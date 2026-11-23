@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
+import { stripFormattingForPreview } from '../../utils/noteFormatting';
 
 interface NotesViewProps {
   setActiveTab: (tab: string) => void;
@@ -299,7 +300,8 @@ export const NotesView: React.FC<NotesViewProps> = ({
               
               if (noteSearchQuery.trim()) {
                 const q = noteSearchQuery.toLowerCase();
-                return (note.title || '').toLowerCase().includes(q) || (note.content || '').toLowerCase().includes(q);
+                const cleanContent = stripFormattingForPreview(note.content || '').toLowerCase();
+                return (note.title || '').toLowerCase().includes(q) || cleanContent.includes(q);
               }
               return true;
             });
@@ -333,6 +335,8 @@ export const NotesView: React.FC<NotesViewProps> = ({
             const borderColors: Record<string, string> = {
               emerald: 'border-r-4 border-r-emerald-500',
               sky: 'border-r-4 border-r-sky-500',
+              indigo: 'border-r-4 border-r-indigo-500',
+              teal: 'border-r-4 border-r-teal-500',
               purple: 'border-r-4 border-r-purple-500',
               amber: 'border-r-4 border-r-amber-500',
               rose: 'border-r-4 border-r-rose-500',
@@ -398,7 +402,7 @@ export const NotesView: React.FC<NotesViewProps> = ({
                             {note.title}
                           </h3>
                           <p className="text-slate-500 text-[11px] font-semibold whitespace-pre-wrap break-words leading-relaxed line-clamp-3 text-right">
-                            {note.content}
+                            {stripFormattingForPreview(note.content)}
                           </p>
                         </div>
 
