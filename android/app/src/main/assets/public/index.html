@@ -3,15 +3,31 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <link rel="manifest" href="/manifest.json" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+    <script>
+      // Fast-track immediate Service Worker registration for guaranteed offline PWA access
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+          navigator.serviceWorker.register('/sw.js', { scope: '/' })
+            .then(function(reg) {
+              console.log('✅ Service Worker مسجل بنجاح للعمل بدون إنترنت (PWA Offline Ready)');
+            })
+            .catch(function(err) {
+              console.warn('Service Worker registration note:', err);
+            });
+        });
+      }
+    </script>
     <meta name="theme-color" content="#0f172a" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="النظام المحاسبي الذكي" />
     <meta name="application-name" content="النظام المحاسبي الذكي" />
+    <meta name="description" content="نظام محاسبي متكامل للأنشطة المختلفة يعمل بدون إنترنت، يدير المخزون، المبيعات والديون، مع دعم قراءة الباركود." />
+    <meta property="og:title" content="النظام المحاسبي الذكي" />
+    <meta property="og:description" content="نظام محاسبي متكامل للأنشطة المختلفة يعمل بدون إنترنت، يدير المخزون، المبيعات والديون، مع دعم قراءة الباركود." />
     <title>النظام المحاسبي الذكي</title>
     <!-- خطوط النظام مدمجة محلياً بالكامل للعمل أوفلاين بدون إنترنت (Cairo, Amiri, Reem Kufi, Aref Ruqaa) -->
     <link rel="stylesheet" href="/fonts/fonts.css" />
@@ -31,38 +47,16 @@
         }
         console.error('Unhandled Rejection:', e.reason);
       });
-      
-      // Handle Service Worker
-      if ('serviceWorker' in navigator) {
-        if (location.hostname === 'localhost' || location.hostname.includes('ais-dev')) {
-          // Dev mode: unregister any leftover service workers to prevent caching bugs
-          navigator.serviceWorker.getRegistrations().then(function(registrations) {
-            for (var registration of registrations) {
-              registration.unregister();
-            }
-          });
-        } else {
-          window.addEventListener('load', function() {
-            navigator.serviceWorker.register('/sw.js')
-              .then(function(reg) {
-                console.log('Offline SW registered successfully:', reg.scope);
-              })
-              .catch(function(err) {
-                console.warn('SW registration failed:', err);
-              });
-          });
-        }
-      }
     </script>
-    <script type="module" crossorigin src="/assets/index-BOkP9Mnz.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/vendor-CQfiDHz-.js">
-    <link rel="modulepreload" crossorigin href="/assets/icons-BvLqAg9f.js">
-    <link rel="modulepreload" crossorigin href="/assets/charts-DNg24SJa.js">
-    <link rel="modulepreload" crossorigin href="/assets/db-CnOIDVPF.js">
-    <link rel="modulepreload" crossorigin href="/assets/firebase-DuOa54iE.js">
-    <link rel="stylesheet" crossorigin href="/assets/index-Ck8Eu-Um.css">
+    <script type="module" crossorigin src="/assets/index-CQ5V5bRc.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/vendor-Dl0vyk7S.js">
+    <link rel="modulepreload" crossorigin href="/assets/icons-CCAYq9zq.js">
+    <link rel="modulepreload" crossorigin href="/assets/charts-LBAWia7P.js">
+    <link rel="modulepreload" crossorigin href="/assets/db-0w_aRDHb.js">
+    <link rel="modulepreload" crossorigin href="/assets/firebase-BHWpklJs.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-DXPXlReC.css">
   <link rel="manifest" href="/manifest.webmanifest"></head>
-  <body>
+  <body style="background-color: #020617; margin: 0;">
     <div id="root"></div>
   </body>
 </html>

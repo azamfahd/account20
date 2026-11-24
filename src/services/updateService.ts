@@ -344,10 +344,15 @@ export async function applyOTAUpdate(newVersionStr?: string, newVersionCode?: nu
   if (typeof window === 'undefined') return;
 
   try {
-    // 1. Wipe old browser CacheStorage so new bundled scripts and styles load immediately
-    if ('caches' in window) {
+    // 1. Refresh service worker caches safely only when online
+    if (typeof navigator !== 'undefined' && navigator.onLine && 'caches' in window) {
       const cacheNames = await caches.keys();
-      await Promise.all(cacheNames.map((name) => caches.delete(name)));
+      // Keep active workbox precache, delete stale legacy caches
+      await Promise.all(
+        cacheNames
+          .filter(name => !name.includes('precache-v2'))
+          .map((name) => caches.delete(name))
+      );
     }
   } catch (err) {
     console.warn('[UpdateService] CacheStorage clear error:', err);

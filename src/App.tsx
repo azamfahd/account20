@@ -980,6 +980,7 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isCategorySidebarOpen, setIsCategorySidebarOpen] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isOnline, setIsOnline] = useState<boolean>(() => typeof navigator !== 'undefined' ? navigator.onLine : true);
 
   // Standalone / APK detection
   const isStandaloneMode = React.useMemo(() => {
@@ -1679,13 +1680,20 @@ export default function App() {
     
     // 3. Online/Offline indicators
     const handleOnline = () => {
-      showNotification('تم استعادة الاتصال 🟢');
+      setIsOnline(true);
+      showNotification('تم استعادة الاتصال بالإنترنت 🟢', 'success');
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      showNotification('أنت الآن تعمل محلياً بدون إنترنت (أوفلاين) - جميع فواتيرك وبياناتك محفوظة بأمان 📴', 'success');
     };
     window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleInstallPrompt);
       window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
     };
   }, []);
 
@@ -6067,6 +6075,23 @@ export default function App() {
               </div>
             )}
           </>
+        )}
+
+        {!isOnline && (
+          <motion.div 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-4 bg-slate-900/95 border border-amber-500/40 p-3 sm:px-4 rounded-2xl text-slate-200 flex flex-wrap items-center justify-between gap-2 shadow-lg text-xs"
+          >
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
+              <span className="font-extrabold text-amber-300">وضع العمل بدون إنترنت (أوفلاين 📴):</span>
+              <span className="text-slate-300 text-[11px] font-medium">النظام يعمل محلياً بالكامل، وكافة الفواتير والديون والحركات تُحفظ تلقائياً في جهازك.</span>
+            </div>
+            <span className="text-[10px] bg-amber-500/15 text-amber-300 font-bold px-2 py-0.5 rounded-lg border border-amber-500/30">
+              مخزن محلياً 100%
+            </span>
+          </motion.div>
         )}
 
         {deferredPrompt && (

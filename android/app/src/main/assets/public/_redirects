@@ -1,0 +1,9 @@
+# Netlify Direct Static Routes
+/sw.js                /sw.js                200!
+/workbox-*.js         /workbox-:splat.js    200!
+/manifest.webmanifest /manifest.webmanifest 200!
+/manifest.json        /manifest.json        200!
+/version.json         /version.json         200!
+
+# SPA Fallback for all other routes
+/*                    /index.html           200

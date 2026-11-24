@@ -12,7 +12,7 @@ export default defineConfig(({mode}) => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        injectRegister: false,
+        injectRegister: 'auto',
         includeAssets: [
           'icon.png',
           'icon.svg',
@@ -20,8 +20,7 @@ export default defineConfig(({mode}) => {
           'icons/icon-192.png',
           'icons/icon-512.png',
           'icons/apple-touch-icon.png',
-          'screenshot-wide.png',
-          'screenshot-narrow.png'
+          'fonts/fonts.css'
         ],
         manifest: {
           id: '/',
@@ -44,10 +43,6 @@ export default defineConfig(({mode}) => {
               platform: 'play',
               id: 'app.azamfahd.account20.twa',
               url: 'https://github.com/azamfahd/account20/releases'
-            },
-            {
-              platform: 'webapp',
-              url: 'https://azamfahd.github.io/account20/manifest.json'
             }
           ],
           shortcuts: [
@@ -174,9 +169,15 @@ export default defineConfig(({mode}) => {
           ]
         },
         workbox: {
-          maximumFileSizeToCacheInBytes: 15 * 1024 * 1024, // 15MB limit
+          maximumFileSizeToCacheInBytes: 25 * 1024 * 1024,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,json,webmanifest}'],
-          navigateFallback: '/index.html',
+          globIgnores: [
+            '**/assets/aistudio/**',
+            '**/screenshot*.png',
+            '**/node_modules/**',
+            '**/*.map'
+          ],
+          navigateFallback: 'index.html',
           navigateFallbackAllowlist: [/^(?!\/__).*/],
           navigateFallbackDenylist: [
             /\.apk$/i,
@@ -190,6 +191,61 @@ export default defineConfig(({mode}) => {
           clientsClaim: true,
           skipWaiting: true,
           runtimeCaching: [
+            {
+              urlPattern: ({ request, url }) =>
+                url.origin === self.location.origin &&
+                (request.destination === 'script' ||
+                 request.destination === 'style' ||
+                 request.destination === 'worker' ||
+                 url.pathname.startsWith('/assets/')),
+              handler: 'StaleWhileRevalidate',
+              options: {
+                cacheName: 'app-assets-cache',
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: ({ request, url }) =>
+                url.origin === self.location.origin &&
+                (request.destination === 'font' ||
+                 url.pathname.startsWith('/fonts/') ||
+                 url.pathname.endsWith('.woff2') ||
+                 url.pathname.endsWith('.woff') ||
+                 url.pathname.endsWith('.ttf')),
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'app-local-fonts',
+                expiration: {
+                  maxEntries: 50,
+                  maxAgeSeconds: 60 * 60 * 24 * 365,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: ({ request, url }) =>
+                url.origin === self.location.origin &&
+                (request.destination === 'image' ||
+                 url.pathname.startsWith('/icons/') ||
+                 url.pathname.endsWith('.png') ||
+                 url.pathname.endsWith('.svg') ||
+                 url.pathname.endsWith('.ico')),
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'app-images-cache',
+                expiration: {
+                  maxEntries: 100,
+                  maxAgeSeconds: 60 * 60 * 24 * 60,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
               handler: 'CacheFirst',
@@ -222,7 +278,8 @@ export default defineConfig(({mode}) => {
         },
         devOptions: {
           enabled: true,
-          type: 'module'
+          type: 'module',
+          navigateFallback: 'index.html'
         }
       })
     ],
